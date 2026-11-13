@@ -8,28 +8,36 @@
 <style>
   html, body { margin: 0; height: 100%; background: #111; color: #eee; font-family: system-ui, sans-serif;
     -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; touch-action: manipulation; overflow: hidden; }
-  .wrap { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 10px; box-sizing: border-box; position: relative; }
-  .bezel { width: min(84vw, 46vh, 400px); aspect-ratio: 1; border-radius: 50%; padding: 10px; background: #1d3a8a;
+  .wrap { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 12px;
+    padding: 50px 10px 10px; box-sizing: border-box; position: relative; overflow-y: auto; }
+  .bezel { width: min(80vw, 42vh, 380px); aspect-ratio: 1; border-radius: 50%; padding: 10px; background: #1d3a8a;
     box-shadow: 0 0 0 4px #0b1d4f, 0 10px 30px rgba(0,0,0,.6); box-sizing: border-box; flex: none; }
   canvas { width: 100%; height: 100%; border-radius: 50%; display: block; background: #000; }
-  .pad { display: flex; gap: 16px; width: min(92vw, 420px); }
-  .btn { flex: 1; height: 84px; border-radius: 22px; border: none; font-size: 22px; font-weight: 700; color: #fff;
+  .pad { display: flex; gap: 16px; width: min(92vw, 420px); flex: none; }
+  .btn { flex: 1; height: 80px; border-radius: 22px; border: none; font-size: 22px; font-weight: 700; color: #fff;
     display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; touch-action: none; font-family: inherit; }
   .btn small { font-size: 13px; font-weight: 500; opacity: .85; }
   #jump { background: #7c3aed; box-shadow: 0 6px 0 #4c1d95; }
   #duck { background: #334155; box-shadow: 0 6px 0 #1e293b; }
   .btn.on { transform: translateY(4px); box-shadow: 0 2px 0 rgba(0,0,0,.5); }
-  #panel { width: min(92vw, 420px); display: flex; flex-direction: column; gap: 10px; }
-  .big { height: 58px; border-radius: 16px; border: none; font-size: 18px; font-weight: 700; color: #fff; font-family: inherit; }
+  #panel { width: min(92vw, 420px); display: flex; flex-direction: column; gap: 10px; flex: none; }
+  .big { height: 56px; border-radius: 16px; border: none; font-size: 18px; font-weight: 700; color: #fff; font-family: inherit; }
   .solo { background: #7c3aed; } .duo { background: #ea7a1a; } .ghost { background: #2a3245; }
   .row { display: flex; gap: 8px; }
   .row > * { flex: 1; }
   input { height: 50px; border-radius: 14px; border: 2px solid #3a445c; background: #1b2132; color: #fff; font-size: 18px;
     padding: 0 12px; box-sizing: border-box; font-family: inherit; text-align: center; min-width: 0; -webkit-user-select: text; user-select: text; }
-  .code { font-size: 15px; text-align: center; background: #1b2132; border-radius: 14px; padding: 10px; line-height: 1.5; }
+  .card { background: #1b2132; border-radius: 14px; padding: 10px 12px; font-size: 15px; line-height: 1.5; }
+  .code { text-align: center; }
   .code b { font-size: 26px; letter-spacing: 4px; color: #ffd200; direction: ltr; display: inline-block; }
   .note { font-size: 13px; opacity: .7; text-align: center; line-height: 1.5; }
-  .warn { font-size: 14px; background: #3a2414; border-radius: 14px; padding: 10px 12px; line-height: 1.5; }
+  table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  td, th { padding: 5px 4px; text-align: right; }
+  th { font-size: 12px; opacity: .6; font-weight: 500; }
+  td.n { text-align: center; direction: ltr; }
+  tr.me td { color: #ffd200; font-weight: 700; }
+  .dot { display: inline-block; width: 11px; height: 11px; border-radius: 50%; margin-left: 6px; vertical-align: middle; }
+  h3 { margin: 0 0 6px; font-size: 16px; }
   #back { position: absolute; top: 10px; right: 10px; height: 36px; padding: 0 14px; border-radius: 18px; border: none;
     background: #2a3245; color: #fff; font-size: 14px; font-family: inherit; z-index: 2; }
   .hidden { display: none !important; }
@@ -39,11 +47,11 @@
 <div class="wrap">
   <button id="back" class="hidden">→ תפריט</button>
   <div class="bezel"><canvas id="c" width="240" height="240"></canvas></div>
-  <div id="panel"></div>
   <div class="pad hidden" id="pad">
     <button class="btn" id="duck">⬇<small>התכופפות</small></button>
     <button class="btn" id="jump">⬆<small id="jumpLabel">קפיצה</small></button>
   </div>
+  <div id="panel"></div>
 </div>
 <script>
 const cv = document.getElementById('c'), g = cv.getContext('2d');
@@ -55,7 +63,12 @@ const levelSpeed   = lv => Math.min(3 + (lv - 1) * 0.5, 7.5);
 const levelGoal    = lv => 6 + lv * 2;
 const levelTypes   = lv => Math.min(lv, 5);
 const levelGapRand = lv => Math.max(30, 130 - lv * 10);
-const trackLen     = lv => 2500 + lv * 900;      // online: distance between the two players
+const raceLen      = lv => 1200 + lv * 400;         // race: track length per level
+const STUN_MS = 700;                                // race: how long a hit freezes you
+const POINTS = [10, 8, 6, 5, 4, 3, 2, 1];           // race: points by finishing place
+const FINISH_WAIT_MS = 15000;                       // race: level ends this long after the first finisher
+const MAX_PLAYERS = 8;
+const COLORS = ['#9650dc', '#f08a24', '#2bb3c0', '#e0457b', '#5cbf3a', '#3a6fe0', '#d4b106', '#a1887f'];
 
 const THEMES = [
   { sky:'#78bef0', sand:'#e6c882', speck:'#b4965a', text:'#141e3c', cloud:'#ffffff' },
@@ -64,7 +77,7 @@ const THEMES = [
   { sky:'#0a0f28', sand:'#46465a', speck:'#28283c', text:'#ffffff', cloud:'#283250' },
   { sky:'#3c0a0a', sand:'#782814', speck:'#dc5a14', text:'#ffe6c8', cloud:'#641e1e' },
 ];
-const C = { dino:'#9650dc', friend:'#f08a24', eye:'#fff', cactus:'#28963c', bird:'#d23c46', heart:'#ff3250', gold:'#ffd200', dim:'#505050' };
+const C = { dino:'#9650dc', eye:'#fff', cactus:'#28963c', bird:'#d23c46', heart:'#ff3250', gold:'#ffd200', silver:'#c8cdd8', bronze:'#d08a4a', dim:'#505050' };
 let T = THEMES[0];
 
 const CAC_S = 0, CAC_L = 1, CAC_D = 2, BIRD_LOW = 3, BIRD_HIGH = 4;
@@ -77,7 +90,7 @@ function obBox(o) {
 }
 
 // ---- shared state ----
-let mode = 'menu';           // 'menu' | 'solo' | 'online'
+let mode = 'menu';           // 'menu' | 'solo' | 'race'
 let state = 'IDLE';
 let level = 1, lives = 3, cleared = 0, spawned = 0, speed = levelSpeed(1);
 let dinoY = GROUND, vy = 0, onGround = true, ducking = false, nextGap = 0;
@@ -100,11 +113,10 @@ function rr(x, y, w, h, r, col) { g.fillStyle = col; g.beginPath(); g.roundRect(
 function rect(x, y, w, h, col) { g.fillStyle = col; g.fillRect(x, y, w, h); }
 function tri(a, b, c, d, e, f, col) { g.fillStyle = col; g.beginPath(); g.moveTo(a,b); g.lineTo(c,d); g.lineTo(e,f); g.fill(); }
 function circ(x, y, r, col) { g.fillStyle = col; g.beginPath(); g.arc(x, y, r, 0, Math.PI*2); g.fill(); }
-function text(s, y, size, col, x = CX) {
-  g.fillStyle = col; g.font = `bold ${size * 8}px monospace`; g.textAlign = 'center'; g.textBaseline = 'top';
+function text(s, y, size, col, x = CX, align = 'center') {
+  g.fillStyle = col; g.font = `bold ${size * 8}px monospace`; g.textAlign = align; g.textBaseline = 'top';
   g.fillText(s, x, y);
 }
-
 function dinoShape(x, b, duck, col, legA) {
   if (!duck) {
     tri(x, b-20, x+9, b-24, x+9, b-12, col);
@@ -124,13 +136,7 @@ function dinoShape(x, b, duck, col, legA) {
     rect(x+18, b-5, 4, legA ? 3 : 5, col);
   }
 }
-function drawDino(duck) { dinoShape(DX, Math.round(dinoY), duck, C.dino, onGround && Math.floor(now / 90) % 2); }
-// friend: drawn facing left, sx = left edge on screen
-function drawFriend(sx, b, duck, running) {
-  g.save(); g.translate(sx + 38, 0); g.scale(-1, 1);
-  dinoShape(0, Math.round(b), duck, C.friend, running && Math.floor(now / 90) % 2);
-  g.restore();
-}
+function drawDino(duck, col = C.dino, running = true) { dinoShape(DX, Math.round(dinoY), duck, col, running && onGround && Math.floor(now / 90) % 2); }
 function drawCactus(cx, h) {
   const top = GROUND - h;
   rr(cx-3, top, 6, h, 3, C.cactus);
@@ -154,16 +160,16 @@ function drawObstacle(o) {
   else if (o.type === BIRD_LOW) drawBird(x, GROUND-18);
   else drawBird(x, GROUND-38);
 }
-function drawWorld(moving) {
+function drawWorld(moveBy) {
   rect(0, 0, 240, 240, T.sky);
   for (const c of clouds) {
-    if (moving) { c[0] -= speed * 0.25; if (c[0] < -30) { c[0] = 260; c[1] = rnd(55, 110); } }
+    c[0] -= moveBy * 0.25; if (c[0] < -30) { c[0] = 260; c[1] = rnd(55, 110); }
     rr(c[0], c[1], 28, 9, 4, T.cloud); rr(c[0]+7, c[1]-5, 14, 9, 4, T.cloud);
   }
   rect(0, GROUND, 240, 240 - GROUND, T.sand);
   rect(0, GROUND, 240, 1, T.speck);
   for (const s of specks) {
-    if (moving) { s[0] -= speed; if (s[0] < 0) s[0] += 240; }
+    s[0] -= moveBy; if (s[0] < 0) s[0] += 240;
     rect(Math.round(s[0]), Math.round(s[1]), 3, 1, T.speck);
   }
 }
@@ -178,6 +184,11 @@ function drawHearts(n, y) {
     circ(hx-2, y, 3, C.heart); circ(hx+2, y, 3, C.heart); tri(hx-5, y+1, hx+5, y+1, hx, y+7, C.heart);
   }
 }
+function drawFlag(x) {
+  rect(x, GROUND - 46, 2, 46, '#333');
+  for (let i = 0; i < 4; i++) for (let j = 0; j < 3; j++) rect(x + 2 + i * 5, GROUND - 46 + j * 5, 5, 5, (i + j) % 2 ? '#fff' : '#111');
+}
+const ord = n => n + (n % 10 === 1 && n !== 11 ? 'ST' : n % 10 === 2 && n !== 12 ? 'ND' : n % 10 === 3 && n !== 13 ? 'RD' : 'TH');
 
 // ---- physics shared by both modes ----
 function physics() {
@@ -197,8 +208,10 @@ function hitTest(o) {
   const [x0, y0, x1, y1] = obBox(o);
   return dx0 < x1 && dx1 > x0 && dy0 < y1 && dy1 > y0;
 }
-function spawn(allowed) {
-  if (!allowed) return;
+
+// ======================= SOLO =======================
+function spawnSolo() {
+  if (spawned >= levelGoal(level)) return;
   let rightmost = -1000;
   for (const o of obs) rightmost = Math.max(rightmost, o.x + obWidth(o.type));
   if (240 - rightmost < nextGap) return;
@@ -206,22 +219,11 @@ function spawn(allowed) {
   spawned++;
   nextGap = speed * 30 + 40 + Math.random() * levelGapRand(level);
 }
-function moveObstacles(onPass, onHit) {
-  for (const o of obs) {
-    o.x -= o.type >= BIRD_LOW ? speed + 0.6 : speed;
-    const [, , x1] = obBox(o);
-    if (!o.passed && x1 < DX) { o.passed = true; onPass(); }
-    if (now > invulnUntil && !o.passed && hitTest(o)) { invulnUntil = now + 1200; o.passed = true; onHit(); }
-  }
-  obs = obs.filter(o => o.x + obWidth(o.type) > -5);
-}
-
-// ======================= SOLO =======================
 function soloTick(edge) {
   const waited = now - stateTime > 600, blink = Math.floor(now / 500) % 2;
   switch (state) {
     case 'INTRO':
-      drawWorld(false); drawDino(false);
+      drawWorld(0); drawDino(false);
       text('LEVEL ' + level, 70, 3, T.text);
       text('JUMP ' + levelGoal(level) + ' OBSTACLES', 105, 1, T.text);
       if (level === 4) text('WATCH OUT: BIRDS!', 120, 1, C.bird);
@@ -230,10 +232,16 @@ function soloTick(edge) {
       break;
     case 'PLAY':
       physics();
-      spawn(spawned < levelGoal(level));
-      moveObstacles(() => cleared++, () => { lives--; cleared++; if (lives <= 0) setState('OVER'); });
+      spawnSolo();
+      for (const o of obs) {
+        o.x -= o.type >= BIRD_LOW ? speed + 0.6 : speed;
+        const [, , x1] = obBox(o);
+        if (!o.passed && x1 < DX) { o.passed = true; cleared++; }
+        if (now > invulnUntil && !o.passed && hitTest(o)) { invulnUntil = now + 1200; o.passed = true; cleared++; lives--; if (lives <= 0) setState('OVER'); }
+      }
+      obs = obs.filter(o => o.x + obWidth(o.type) > -5);
       if (state === 'PLAY' && cleared >= levelGoal(level)) { if (lives < 5) lives++; setState(level >= MAX_LEVEL ? 'WIN' : 'CLEAR'); }
-      drawWorld(true);
+      drawWorld(speed);
       for (const o of obs) drawObstacle(o);
       if (!(now < invulnUntil && Math.floor(now / 100) % 2)) drawDino(ducking);
       text('LEVEL ' + level, 22, 2, T.text); drawHearts(lives, 48);
@@ -241,19 +249,19 @@ function soloTick(edge) {
       drawRing(cleared / levelGoal(level));
       break;
     case 'CLEAR':
-      drawWorld(false); drawDino(false); drawRing(1);
+      drawWorld(0); drawDino(false); drawRing(1);
       text('LEVEL', 70, 3, C.gold); text('CLEAR!', 100, 3, C.gold);
       if (now - stateTime > 1800 || (waited && edge)) startLevel(level + 1);
       break;
     case 'OVER':
-      drawWorld(false); drawDino(true);
+      drawWorld(0); drawDino(true);
       text('GAME', 60, 3, C.heart); text('OVER', 90, 3, C.heart);
       text('LEVEL ' + level, 125, 2, T.text);
       if (blink) text('PRESS TO RETRY', 150, 1, T.text);
       if (waited && edge) { lives = 3; startLevel(level); }
       break;
     case 'WIN':
-      drawWorld(true); drawDino(false);
+      drawWorld(speed); drawDino(false);
       text('YOU', 60, 4, C.gold); text('WIN!', 100, 4, C.gold);
       if (blink) text('PRESS TO PLAY AGAIN', 145, 1, T.text);
       if (waited && edge) { lives = 3; startLevel(1); }
@@ -261,182 +269,295 @@ function soloTick(edge) {
   }
 }
 
-// ======================= ONLINE =======================
-// Each player runs toward the other. Distance between you = trackLen(level).
-// Your progress (d) + your friend's progress (fd) >= trackLen  ->  you meet.
-// Networking: PeerJS (free public broker) connects the two browsers directly.
-let peer = null, conn = null, isHost = false;
-let code = '', myName = '', myReady = false;
-let d = 0, fd = 0, fdTarget = 0, friend = null, friendSeen = 0, levelStart = 0, metTime = 0;
-let pres = {}, presDirty = false, presSent = 0;
-const hearts = [];
-const PEER_PREFIX = 'dinorun-v1-';
+// ======================= RACE (online, up to 8 players) =======================
+// The room creator is the HOST: everyone connects to the host, the host decides
+// when levels start, collects finish times, gives points and sends the tables.
+// Every player gets the same course (same random seed), so the race is fair.
+const PEER_PREFIX = 'dinorun-race-v1-';
+let peer = null, isHost = false, hostConn = null;
+const guestConns = new Map();          // host only: peerId -> connection
+let myId = '', myName = '', code = '';
+let players = {};                      // id -> {id, name, color, pts, p1, p2, p3, inRace, d, y, duck, fin, ft}
+let phase = 'lobby';                   // lobby | count | race | results | final
+let course = null, d = 0, stunUntil = 0, raceStart = 0, myFin = false, myFt = 0, firstFinishAt = 0;
+let lastResults = null, sendT = 0, roomSendT = 0, resultsShownAt = 0;
 
-function setPres(patch) { Object.assign(pres, patch); presDirty = true; }
-function flushPres() {
-  if (!conn || !conn.open) return;
-  if ((presDirty && now - presSent >= 100) || now - presSent >= 700) {   // changes ~10/s, heartbeat otherwise
-    presDirty = false; presSent = now;
-    try { conn.send(pres); } catch (e) {}
+function cleanName(s) { return String(s || '').replace(/[^\p{L}\p{N} _-]/gu, '').trim().slice(0, 12); }
+function mulberry32(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+function makeCourse(seed, lv) {
+  const r = mulberry32(seed + lv * 7919), sp = levelSpeed(lv), L = raceLen(lv), list = [];
+  let p = 380;
+  while (p < L - 120) { list.push({ p, type: Math.floor(r() * levelTypes(lv)), passed: false, x: 999 }); p += sp * 30 + 40 + r() * levelGapRand(lv); }
+  return { L, obs: list };
+}
+const me = () => players[myId];
+
+// ---- sending ----
+function sendTo(c, msg) { try { if (c && c.open) c.send(msg); } catch (e) {} }
+function broadcast(msg) { for (const c of guestConns.values()) sendTo(c, msg); }
+function rosterMsg() {
+  return { t: 'room', phase, level, players: Object.values(players).map(p => ({ id: p.id, name: p.name, color: p.color, pts: p.pts, p1: p.p1, p2: p.p2, p3: p.p3, inRace: p.inRace })) };
+}
+function sendRoster() { broadcast(rosterMsg()); renderRoomPanel(); }
+
+// ---- receiving ----
+function onGuestData(id, m) {                   // host side
+  if (!m || typeof m !== 'object') return;
+  const p = players[id];
+  if (m.t === 'hello' && p) { p.name = cleanName(m.name) || 'PLAYER'; sendRoster(); }
+  else if (m.t === 'st' && p) {
+    if (m.lv !== level || !p.inRace || (phase !== 'race' && phase !== 'count')) return;   // ignore updates left over from another level
+    p.d = +m.d || 0; p.y = +m.y || GROUND; p.duck = !!m.duck;
+    if (m.fin && !p.fin && p.inRace) { p.fin = true; p.ft = +m.ft || 0; if (!firstFinishAt) firstFinishAt = now; }
   }
 }
-function cleanName(s) { return String(s || '').replace(/[^\p{L}\p{N} _-]/gu, '').slice(0, 12); }
-function findFriend() { if (!conn || !conn.open) friend = null; }
-
-function setStatus(t) { const n = $('nStatus'); if (n) n.textContent = t; }
-function wireConn(c) {
-  if (conn && conn !== c) { try { c.close(); } catch (e) {} return; }   // one friend per room
-  conn = c;
-  c.on('data', data => {
-    if (!data || typeof data !== 'object' || data.game !== 'dinorun') return;
-    friend = data; friendSeen = now;
-  });
-  c.on('open', () => { presDirty = true; presSent = -1000; friendSeen = now; });
-  c.on('close', () => { if (conn === c) { conn = null; friend = null; } });
-  c.on('error', () => {});
+function onHostData(m) {                        // guest side
+  if (!m || typeof m !== 'object') return;
+  if (m.t === 'room') {
+    const old = players; players = {};
+    for (const q of m.players || []) players[q.id] = Object.assign({ d: 0, y: GROUND, duck: false, fin: false, ft: 0 }, old[q.id] || {}, q);
+    if (m.phase === 'lobby' && phase !== 'lobby') { phase = 'lobby'; level = m.level || 1; resetRun(); setState('RLOBBY'); }
+    renderRoomPanel();
+  } else if (m.t === 'st') {
+    for (const [id, s] of Object.entries(m.p || {})) if (players[id] && id !== myId) Object.assign(players[id], s);
+  } else if (m.t === 'start') {
+    beginCountdown(m.level, m.seed, m.ids || []);
+  } else if (m.t === 'res') {
+    lastResults = m; phase = m.final ? 'final' : 'results';
+    for (const row of m.rows) if (players[row.id]) Object.assign(players[row.id], { pts: row.total, p1: row.p1, p2: row.p2, p3: row.p3 });
+    setState(m.final ? 'RFINAL' : 'RRES'); renderRoomPanel();
+  } else if (m.t === 'full') {
+    showSetupError('החדר מלא (עד ' + MAX_PLAYERS + ' שחקנים).');
+  }
 }
 
-function joinRoom(c, host) {
+// ---- host logic ----
+function hostAddGuest(c) {
+  if (Object.keys(players).length >= MAX_PLAYERS) { c.on('open', () => { sendTo(c, { t: 'full' }); setTimeout(() => c.close(), 500); }); return; }
+  const used = new Set(Object.values(players).map(p => p.color));
+  const color = COLORS.find(x => !used.has(x)) || COLORS[0];
+  c.on('open', () => {
+    guestConns.set(c.peer, c);
+    players[c.peer] = { id: c.peer, name: 'PLAYER', color, pts: 0, p1: 0, p2: 0, p3: 0, inRace: false, d: 0, y: GROUND, duck: false, fin: false, ft: 0 };
+    sendRoster();
+  });
+  c.on('data', m => onGuestData(c.peer, m));
+  c.on('close', () => { guestConns.delete(c.peer); delete players[c.peer]; sendRoster(); });
+  c.on('error', () => {});
+}
+function hostStartLevel(lv) {
+  const seed = Math.floor(Math.random() * 1e9);
+  const ids = Object.keys(players);
+  for (const p of Object.values(players)) Object.assign(p, { inRace: true, d: 0, fin: false, ft: 0 });
+  firstFinishAt = 0;
+  broadcast({ t: 'start', level: lv, seed, ids });
+  beginCountdown(lv, seed, ids);
+  sendRoster();
+}
+function hostCheckLevelEnd() {
+  const racers = Object.values(players).filter(p => p.inRace);
+  const allDone = racers.length > 0 && racers.every(p => p.fin);
+  if (!allDone && !(firstFinishAt && now - firstFinishAt > FINISH_WAIT_MS)) return;
+  const finished = racers.filter(p => p.fin).sort((a, b) => a.ft - b.ft);
+  const notFinished = racers.filter(p => !p.fin).sort((a, b) => b.d - a.d);
+  const rows = [];
+  finished.forEach((p, i) => {
+    const got = POINTS[i] || 0; p.pts += got;
+    if (i === 0) p.p1++; else if (i === 1) p.p2++; else if (i === 2) p.p3++;
+    rows.push({ id: p.id, place: i + 1, ft: p.ft, got });
+  });
+  notFinished.forEach(p => rows.push({ id: p.id, place: 0, ft: 0, got: 0 }));
+  for (const p of Object.values(players)) p.inRace = false;
+  const final = level >= MAX_LEVEL;
+  const totals = Object.values(players).map(p => ({ id: p.id, total: p.pts, p1: p.p1, p2: p.p2, p3: p.p3 }));
+  const msg = { t: 'res', level, final, rows: totals.map(t => Object.assign(t, rows.find(r => r.id === t.id) || { place: -1, got: 0, ft: 0 })) };
+  lastResults = msg; phase = final ? 'final' : 'results';
+  broadcast(msg); sendRoster();
+  setState(final ? 'RFINAL' : 'RRES');
+}
+
+// ---- both ----
+function beginCountdown(lv, seed, ids) {
+  level = lv; resetRun(); course = makeCourse(seed, lv);
+  d = 0; stunUntil = 0; myFin = false; myFt = 0; obs = course.obs;
+  for (const id of ids) if (players[id]) Object.assign(players[id], { inRace: true, d: 0, fin: false, ft: 0 });
+  phase = 'count'; setState('RCOUNT'); renderRoomPanel();
+}
+function standings() {
+  return Object.values(players).sort((a, b) => b.pts - a.pts || b.p1 - a.p1 || b.p2 - a.p2 || b.p3 - a.p3);
+}
+function livePlace() {
+  const racers = Object.values(players).filter(p => p.inRace);
+  racers.sort((a, b) => (a.fin && b.fin) ? a.ft - b.ft : a.fin ? -1 : b.fin ? 1 : b.d - a.d);
+  return { place: racers.findIndex(p => p.id === myId) + 1, of: racers.length };
+}
+
+function raceTick(edge) {
+  const blink = Math.floor(now / 500) % 2;
+  const m = me();
+  if (m) { m.d = d; m.y = dinoY; m.duck = ducking; m.fin = m.fin || myFin; if (myFin) m.ft = myFt; }
+  const myColor = m ? m.color : C.dino;
+
+  switch (state) {
+    case 'RLOBBY': {
+      drawWorld(0); drawDino(false, myColor);
+      const n = Object.keys(players).length;
+      text('PLAYERS: ' + n, 40, 2, T.text);
+      text('CODE ' + code.toUpperCase(), 70, 2, C.gold);
+      if (isHost) {
+        if (blink) text(n > 1 ? 'PRESS JUMP TO START' : 'WAITING FOR PLAYERS', 105, 1, T.text);
+        if (edge && n >= 1) hostStartLevel(1);
+      } else text('WAITING FOR HOST...', 105, 1, T.text);
+      break;
+    }
+    case 'RCOUNT': {
+      drawWorld(0); drawDino(false, myColor);
+      const left = 3 - Math.floor((now - stateTime) / 1000);
+      text('LEVEL ' + level, 40, 2, T.text);
+      text(String(Math.max(left, 1)), 70, 6, C.gold);
+      if (left <= 0) { phase = 'race'; raceStart = now; invulnUntil = now + 600; setState('RRACE'); }
+      break;
+    }
+    case 'RRACE': case 'RDONE': {
+      const running = !myFin && now >= stunUntil;
+      if (!myFin) {
+        physics();
+        if (running) d += speed;
+        for (const o of obs) {
+          o.x = DX + (o.p - d);
+          if (!o.passed && o.x + obWidth(o.type) < DX) o.passed = true;
+          if (now > invulnUntil && !o.passed && hitTest(o)) { o.passed = true; stunUntil = now + STUN_MS; invulnUntil = now + STUN_MS + 600; }
+        }
+        if (d >= course.L) { d = course.L; myFin = true; myFt = now - raceStart; dinoY = GROUND; onGround = true; if (m) { m.fin = true; m.ft = myFt; } if (isHost && !firstFinishAt) firstFinishAt = now; setState('RDONE'); }
+      } else for (const o of obs) o.x = DX + (o.p - d);
+
+      drawWorld(running ? speed : 0);
+      drawFlag(DX + (course.L - d) + 34);
+      for (const o of obs) if (o.x > -30 && o.x < 250) drawObstacle(o);
+      // other players as see-through ghosts
+      g.globalAlpha = 0.5;
+      for (const p of Object.values(players)) {
+        if (p.id === myId || !p.inRace) continue;
+        const sx = DX + ((p.fin ? course.L : p.d) - d);
+        if (sx > -40 && sx < 245) dinoShape(sx, Math.round(p.y || GROUND), !!p.duck, p.color, !p.fin && Math.floor(now / 90) % 2);
+      }
+      g.globalAlpha = 1;
+      const stunned = now < stunUntil;
+      if (!(now < invulnUntil && Math.floor(now / 100) % 2)) drawDino(ducking, myColor, running);
+      if (stunned) text('OUCH!', GROUND - 58, 1, C.heart, DX + 18);
+
+      text('LEVEL ' + level, 22, 2, T.text);
+      // progress bar with everyone
+      const mx0 = 58, mx1 = 182, my = 52;
+      rect(mx0, my, mx1 - mx0, 2, T.text); rect(mx1, my - 6, 2, 14, T.text);
+      for (const p of Object.values(players)) if (p.inRace && p.id !== myId) circ(mx0 + (mx1 - mx0) * Math.min((p.fin ? course.L : p.d) / course.L, 1), my + 1, 4, p.color);
+      circ(mx0 + (mx1 - mx0) * Math.min(d / course.L, 1), my + 1, 6, myColor);
+      const lp = livePlace();
+      if (myFin) { text('FINISHED!', 80, 2, C.gold); text(ord(lp.place) + ' PLACE', 102, 2, T.text); text('WAITING FOR OTHERS', 128, 1, T.text); }
+      else text(ord(lp.place) + ' / ' + lp.of, 190, 2, T.text);
+      drawRing(d / course.L);
+      if (isHost) hostCheckLevelEnd();
+      break;
+    }
+    case 'RRES': {
+      drawWorld(0); drawDino(false, myColor, false);
+      text('LEVEL ' + level, 26, 2, T.text);
+      const rows = (lastResults ? lastResults.rows : []).filter(r => r.place > 0).sort((a, b) => a.place - b.place).slice(0, 3);
+      const medal = [C.gold, C.silver, C.bronze];
+      rows.forEach((r, i) => {
+        const p = players[r.id]; const nm = p ? (p.name || 'PLAYER').toUpperCase() : '?';
+        circ(52, 62 + i * 24, 8, medal[i]); text(String(i + 1), 58 + i * 24, 1, '#111', 52);
+        text(nm, 56 + i * 24, 2, p ? p.color : T.text, 66, 'left');
+      });
+      if (!rows.length) text('NOBODY FINISHED', 70, 1, T.text);
+      text('NEXT LEVEL SOON', 140, 1, T.text);
+      if (isHost && now - stateTime > 6000) hostStartLevel(level + 1);
+      break;
+    }
+    case 'RFINAL': {
+      drawWorld(speed * 0.5); drawDino(false, myColor);
+      const top = standings()[0];
+      text('WINNER', 30, 3, C.gold);
+      if (top) { text((top.name || 'PLAYER').toUpperCase(), 62, 2, top.color); text(top.pts + ' POINTS', 86, 1, T.text); }
+      if (isHost) { if (blink) text('JUMP = NEW GAME', 130, 1, T.text); if (edge && now - stateTime > 1500) hostNewGame(); }
+      else text('SEE TABLE BELOW', 130, 1, T.text);
+      break;
+    }
+    case 'RLOST':
+      drawWorld(0); drawDino(true, myColor);
+      text('HOST', 70, 3, C.heart); text('LEFT', 100, 3, C.heart);
+      text('BACK TO MENU ↗', 140, 1, T.text);
+      break;
+  }
+
+  // network: ~10 updates per second
+  if (now - sendT >= 100) {
+    sendT = now;
+    if (isHost) {
+      const p = {};
+      for (const q of Object.values(players)) p[q.id] = { d: Math.round(q.d), y: Math.round(q.y), duck: q.duck, fin: q.fin, ft: q.ft };
+      if (guestConns.size) broadcast({ t: 'st', p });
+      if (now - roomSendT > 3000) { roomSendT = now; broadcast(rosterMsg()); }
+    } else if (hostConn && hostConn.open) {
+      sendTo(hostConn, { t: 'st', lv: level, d: Math.round(d), y: Math.round(dinoY), duck: ducking, fin: myFin, ft: myFt });
+    }
+  }
+}
+function hostNewGame() {
+  for (const p of Object.values(players)) Object.assign(p, { pts: 0, p1: 0, p2: 0, p3: 0, inRace: false, fin: false, d: 0 });
+  level = 1; resetRun(); phase = 'lobby'; lastResults = null; setState('RLOBBY'); sendRoster();
+}
+
+// ---- connect ----
+function connect(c, host) {
   return new Promise(resolve => {
     if (typeof Peer === 'undefined') { resolve('nolib'); return; }
     code = c; isHost = host;
-    pres = { game: 'dinorun', code, name: myName, level, stage: 'wait', ready: false, d: 0, y: GROUND, duck: false };
-    presDirty = true; presSent = -1000;
     let done = false; const finish = r => { if (!done) { done = true; resolve(r); } };
     peer = host ? new Peer(PEER_PREFIX + code) : new Peer();
-    peer.on('open', () => {
-      if (host) { peer.on('connection', wireConn); finish('ok'); }
-      else {
-        const c2 = peer.connect(PEER_PREFIX + code, { reliable: true });
-        wireConn(c2);
-        c2.on('open', () => finish('ok'));
-        setTimeout(() => finish(conn && conn.open ? 'ok' : 'timeout'), 12000);
+    peer.on('open', id => {
+      myId = host ? 'host' : id;
+      players = {};
+      if (host) {
+        players[myId] = { id: myId, name: myName || 'HOST', color: COLORS[0], pts: 0, p1: 0, p2: 0, p3: 0, inRace: false, d: 0, y: GROUND, duck: false, fin: false, ft: 0 };
+        peer.on('connection', hostAddGuest);
+        finish('ok');
+      } else {
+        hostConn = peer.connect(PEER_PREFIX + code, { reliable: true });
+        hostConn.on('open', () => { sendTo(hostConn, { t: 'hello', name: myName }); finish('ok'); });
+        hostConn.on('data', onHostData);
+        hostConn.on('close', () => { hostConn = null; if (mode === 'race' && state !== 'IDLE') setState('RLOST'); });
+        hostConn.on('error', () => {});
+        setTimeout(() => finish(hostConn && hostConn.open ? 'ok' : 'timeout'), 12000);
       }
     });
     peer.on('error', err => {
       const t = err && err.type;
       if (t === 'unavailable-id') finish('taken');
       else if (t === 'peer-unavailable') finish('nohost');
-      else if (!done) finish('neterr');
+      else finish('neterr');
     });
     peer.on('disconnected', () => { try { peer.reconnect(); } catch (e) {} });
   });
 }
-async function leaveRoom() {
-  try { if (conn) conn.close(); } catch (e) {}
+function disconnect() {
+  try { if (hostConn) hostConn.close(); } catch (e) {}
+  for (const c of guestConns.values()) { try { c.close(); } catch (e) {} }
+  guestConns.clear();
   try { if (peer) peer.destroy(); } catch (e) {}
-  conn = null; peer = null; friend = null;
-}
-
-function onlineTick(edge) {
-  findFriend();
-  const blink = Math.floor(now / 500) % 2;
-  const friendGone = now - friendSeen > 4000 || (!conn && state !== 'OWAIT');
-  const fName = friend ? (cleanName(friend.name) || 'FRIEND') : 'FRIEND';
-
-  switch (state) {
-    case 'OWAIT': {
-      drawWorld(false); drawDino(false);
-      text('LEVEL ' + level, 40, 2, T.text);
-      if (!friend) {
-        text('WAITING FOR', 80, 2, T.text); text('A FRIEND...', 100, 2, T.text);
-        text('CODE ' + code.toUpperCase(), 130, 2, C.gold);
-      } else {
-        // a friend who is already further along pulls us to their level
-        if (friend.stage === 'wait' && friend.level > level) { level = friend.level; resetRun(); }
-        text(fName.toUpperCase(), 72, 2, C.friend); text('IS HERE!', 92, 2, T.text);
-        if (!myReady) { if (blink) text('PRESS JUMP = READY', 125, 1, T.text); if (edge) myReady = true; }
-        else text(friend.ready ? 'GET SET!' : 'WAITING FOR FRIEND', 125, 1, T.text);
-        if (myReady && friend.ready && friend.level === level && (friend.stage === 'wait' || friend.stage === 'count')) setState('OCOUNT');
-      }
-      setPres({ stage: 'wait', ready: myReady, level, d: 0 });
-      break;
-    }
-    case 'OCOUNT': {
-      drawWorld(false); drawDino(false);
-      const left = 3 - Math.floor((now - stateTime) / 1000);
-      text('LEVEL ' + level, 40, 2, T.text);
-      text(String(Math.max(left, 1)), 70, 6, C.gold);
-      text('RUN TO ' + fName.toUpperCase() + '!', 130, 1, T.text);
-      setPres({ stage: 'count', ready: true, level, d: 0 });
-      if (friendGone) { setState('OLOST'); break; }
-      if (left <= 0) { resetRun(); d = 0; fd = 0; fdTarget = 0; levelStart = now; invulnUntil = now + 800; setState('OPLAY'); }
-      break;
-    }
-    case 'OPLAY': {
-      const L = trackLen(level);
-      if (friend && friend.level === level && (friend.stage === 'play' || friend.stage === 'met')) fdTarget = Math.max(fdTarget, +friend.d || 0);
-      fd += (fdTarget - fd) * 0.25;
-      physics();
-      d += speed;
-      const gap = L - d - fdTarget;
-      spawn(gap > 320);
-      moveObstacles(() => {}, () => { d = Math.max(0, d - 150); });   // a hit pushes you back
-      setPres({ stage: 'play', level, d: Math.round(d), y: Math.round(dinoY), duck: ducking });
-
-      drawWorld(true);
-      for (const o of obs) drawObstacle(o);
-      const vis = L - d - fd;
-      if (vis < 240 && friend) drawFriend(DX + 40 + Math.max(vis, 0), +friend.y || GROUND, !!friend.duck, true);
-      if (!(now < invulnUntil && Math.floor(now / 100) % 2)) drawDino(ducking);
-      text('LEVEL ' + level, 22, 2, T.text);
-      // mini map: you from the left, friend from the right
-      const mx0 = 62, mx1 = 178, my = 50;
-      rect(mx0, my, mx1 - mx0, 2, T.text);
-      circ(mx0 + (mx1 - mx0) * Math.min(d / L, 1), my + 1, 5, C.dino);
-      circ(mx1 - (mx1 - mx0) * Math.min(fd / L, 1), my + 1, 5, C.friend);
-      text(fName.toUpperCase(), 195, 1, C.friend);
-      drawRing((d + fd) / L);
-
-      if (d + fdTarget >= L) { metTime = now - levelStart; for (let i = 0; i < 8; i++) hearts.push({ x: DX + 40 + rnd(-20, 20), y: GROUND - 40, v: rnd(0.5, 1.5) }); setState('OMET'); }
-      else if (friendGone) setState('OLOST');
-      break;
-    }
-    case 'OMET': {
-      dinoY = GROUND; onGround = true;
-      drawWorld(false); drawDino(false); drawFriend(DX + 42, GROUND, false, false);
-      for (const h of hearts) { h.y -= h.v; circ(h.x - 2, h.y, 3, C.heart); circ(h.x + 2, h.y, 3, C.heart); tri(h.x - 5, h.y + 1, h.x + 5, h.y + 1, h.x, h.y + 7, C.heart); }
-      text('YOU MET!', 50, 3, C.gold);
-      text((metTime / 1000).toFixed(1) + ' SEC', 85, 2, T.text);
-      drawRing(1);
-      setPres({ stage: 'met', level, d: Math.round(d) });
-      if (now - stateTime > 3000) {
-        hearts.length = 0;
-        if (level >= MAX_LEVEL) setState('OWIN');
-        else { level++; resetRun(); myReady = true; setState('OWAIT'); }
-      }
-      break;
-    }
-    case 'OLOST':
-      drawWorld(false); drawDino(false);
-      text('FRIEND', 70, 3, C.friend); text('LEFT', 100, 3, C.friend);
-      if (blink) text('PRESS JUMP TO WAIT', 140, 1, T.text);
-      setPres({ stage: 'wait', ready: false, level, d: 0 });
-      if (friend && friend.stage === 'wait') { myReady = false; setState('OWAIT'); }
-      else if (edge) { myReady = false; setState('OWAIT'); }
-      break;
-    case 'OWIN':
-      drawWorld(true); drawDino(false); drawFriend(DX + 42, GROUND, false, true);
-      text('YOU BOTH', 50, 3, C.gold); text('WIN!', 85, 4, C.gold);
-      if (blink) text('PRESS TO PLAY AGAIN', 145, 1, T.text);
-      setPres({ stage: 'met', level });
-      if (now - stateTime > 800 && edge) { level = 1; resetRun(); myReady = false; setState('OWAIT'); }
-      break;
-  }
-  flushPres();
+  peer = null; hostConn = null; players = {}; isHost = false;
 }
 
 // ======================= MENU / UI =======================
 function idleTick() {
-  drawWorld(true); drawDino(false);
+  drawWorld(speed); drawDino(false);
   text('DINO', 62, 4, T.text); text('RUN', 100, 3, C.dino);
 }
-
 function tick() {
   const edge = jumpEdge; jumpEdge = false;
   g.save(); g.beginPath(); g.arc(CX, CY, 120, 0, Math.PI*2); g.clip();
   if (mode === 'solo') soloTick(edge);
-  else if (mode === 'online' && state !== 'IDLE') onlineTick(edge);
+  else if (mode === 'race' && state !== 'IDLE') raceTick(edge);
   else idleTick();
   g.restore();
 }
@@ -445,47 +566,48 @@ const panel = $('panel'), pad = $('pad'), back = $('back');
 function show(el, on) { el.classList.toggle('hidden', !on); }
 function loadName() { try { return localStorage.getItem('dino-name') || ''; } catch (e) { return ''; } }
 function saveName(n) { try { localStorage.setItem('dino-name', n); } catch (e) {} }
+function el(tag, props = {}, kids = []) { const e = document.createElement(tag); Object.assign(e, props); for (const k of kids) e.append(k); return e; }
 
 function renderMenu() {
   mode = 'menu'; state = 'IDLE'; level = 1; resetRun();
   show(pad, false); show(back, false);
   panel.innerHTML = `
     <button class="big solo" id="bSolo">▶ משחק לבד</button>
-    <button class="big duo" id="bDuo">👥 עם חבר — אונליין</button>
-    <div class="note">באונליין: אתה רץ משמאל, החבר מימין, ושניכם קופצים על מכשולים עד שנפגשים באמצע.</div>`;
+    <button class="big duo" id="bRace">🏁 מירוץ עם חברים — אונליין</button>
+    <div class="note">במירוץ: עד ${MAX_PLAYERS} שחקנים רצים באותו מסלול. מי שנתקע במכשול מתעכב רגע. בכל שלב מקבלים נקודות לפי סדר ההגעה, ואחרי ${MAX_LEVEL} שלבים יש מנצח.</div>`;
   $('bSolo').onclick = () => { mode = 'solo'; lives = 3; startLevel(1); panel.innerHTML = ''; show(pad, true); show(back, true); $('jumpLabel').textContent = 'קפיצה'; };
-  $('bDuo').onclick = renderOnlineSetup;
+  $('bRace').onclick = renderRaceSetup;
 }
-
 function newCode() { const a = 'abcdefghjkmnpqrstuvwxyz23456789'; let s = ''; for (let i = 0; i < 4; i++) s += a[Math.floor(Math.random() * a.length)]; return s; }
+function showSetupError(t) { disconnect(); renderRaceSetup(); const n = $('nStatus'); if (n) n.textContent = t; }
 
-function renderOnlineSetup() {
-  mode = 'online'; state = 'IDLE';
+function renderRaceSetup() {
+  mode = 'race'; state = 'IDLE';
   show(pad, false); show(back, true);
   panel.innerHTML = `
     <input id="iName" maxlength="12" placeholder="השם שלך">
-    <button class="big duo" id="bNew">צור חדר חדש</button>
+    <button class="big duo" id="bNew">צור חדר חדש (אתה המארח)</button>
     <div class="row"><input id="iCode" maxlength="4" placeholder="קוד" dir="ltr" autocapitalize="characters"><button class="big ghost" id="bJoin">הצטרף</button></div>
     <div class="note" id="nStatus"></div>
-    <div class="note">שני השחקנים צריכים להיות מחוברים לאינטרנט. ברשתות מסוימות (בעיקר סלולר) החיבור הישיר עלול לא לעבוד — אז כדאי לנסות כששניכם על Wi-Fi.</div>`;
+    <div class="note">כולם צריכים אינטרנט. אם החיבור לא מצליח ברשת סלולרית — נסו על Wi-Fi.</div>`;
   const iName = $('iName'); iName.value = loadName();
   const go = async (c, host) => {
     myName = cleanName(iName.value); saveName(myName);
-    setStatus('מתחבר...');
-    const r = await joinRoom(c, host);
+    $('nStatus').textContent = 'מתחבר...';
+    const r = await connect(c, host);
     if (r !== 'ok') {
-      await leaveRoom();
+      disconnect();
       if (r === 'taken') return go(newCode(), true);
-      setStatus({ nohost: 'לא נמצא חדר עם הקוד הזה. ודא שהחבר יצר חדר והמשחק פתוח אצלו.',
-                  timeout: 'החיבור לא הצליח. נסו ששניכם תהיו על Wi-Fi ונסו שוב.',
-                  nolib: 'לא הצלחתי לטעון את רכיב החיבור. בדוק אינטרנט ורענן.',
-                  neterr: 'בעיית רשת. נסה שוב בעוד רגע.' }[r] || 'שגיאה. נסה שוב.');
+      const n = $('nStatus');
+      if (n) n.textContent = { nohost: 'לא נמצא חדר עם הקוד הזה. ודא שהמארח יצר חדר והמשחק פתוח אצלו.',
+        timeout: 'החיבור לא הצליח. נסו על Wi-Fi ונסו שוב.', nolib: 'לא הצלחתי לטעון את רכיב החיבור. בדוק אינטרנט ורענן.',
+        neterr: 'בעיית רשת. נסה שוב בעוד רגע.' }[r] || 'שגיאה. נסה שוב.';
       return;
     }
-    level = 1; resetRun(); myReady = false; friendSeen = now; setState('OWAIT');
-    $('jumpLabel').textContent = 'קפיצה / מוכן';
+    level = 1; resetRun(); phase = 'lobby'; setState('RLOBBY');
+    $('jumpLabel').textContent = isHost ? 'קפיצה / התחל' : 'קפיצה';
     show(pad, true);
-    panel.innerHTML = `<div class="code">קוד החדר: <b>${code.toUpperCase()}</b><br>${host ? 'שלח את הקוד לחבר — הוא בוחר "הצטרף" ומקליד אותו.' : 'מחובר!'}</div>`;
+    renderRoomPanel();
   };
   $('bNew').onclick = () => go(newCode(), true);
   $('bJoin').onclick = () => {
@@ -495,7 +617,31 @@ function renderOnlineSetup() {
   };
 }
 
-back.onclick = async () => { await leaveRoom(); renderMenu(); };
+function renderRoomPanel() {
+  if (mode !== 'race' || state === 'IDLE') return;
+  panel.textContent = '';
+  if (phase === 'lobby') {
+    panel.append(el('div', { className: 'card code', innerHTML: `קוד החדר: <b>${code.toUpperCase()}</b>` },
+      [el('div', { className: 'note', textContent: isHost ? 'שלחו את הקוד לחברים. כשכולם בפנים — לחץ קפיצה כדי להתחיל.' : 'מחכים שהמארח יתחיל.' })]));
+  }
+  const showResults = lastResults && (phase === 'results' || phase === 'final');
+  const card = el('div', { className: 'card' });
+  card.append(el('h3', { textContent: phase === 'final' ? '🏆 טבלה סופית' : showResults ? `אחרי שלב ${lastResults.level}` : `שחקנים (${Object.keys(players).length}/${MAX_PLAYERS})` }));
+  const tbl = el('table');
+  tbl.append(el('tr', {}, [el('th', { textContent: '#' }), el('th', { textContent: 'שחקן' }),
+    el('th', { textContent: showResults ? 'בשלב' : '' }), el('th', { textContent: 'נק׳' }), el('th', { className: 'n', textContent: '🥇🥈🥉' })]));
+  standings().forEach((p, i) => {
+    const row = showResults ? lastResults.rows.find(r => r.id === p.id) : null;
+    const lvl = row ? (row.place > 0 ? `${row.place} (+${row.got})` : row.place === 0 ? 'לא סיים' : '—') : '';
+    const nameCell = el('td', {}, [el('span', { className: 'dot', style: `background:${p.color}` }), document.createTextNode((p.name || 'PLAYER') + (p.id === myId ? ' (אתה)' : ''))]);
+    tbl.append(el('tr', { className: p.id === myId ? 'me' : '' }, [el('td', { className: 'n', textContent: i + 1 }), nameCell,
+      el('td', { className: 'n', textContent: lvl }), el('td', { className: 'n', textContent: p.pts }), el('td', { className: 'n', textContent: `${p.p1}·${p.p2}·${p.p3}` })]));
+  });
+  card.append(tbl);
+  panel.append(card);
+}
+
+back.onclick = () => { disconnect(); renderMenu(); };
 
 // fixed 28ms step
 let acc = 0, last = performance.now();
@@ -511,10 +657,10 @@ renderMenu();
 function setJump(v) { if (v && !input.jump) jumpEdge = true; input.jump = v; $('jump').classList.toggle('on', v); }
 function setDuck(v) { input.duck = v; $('duck').classList.toggle('on', v); }
 function hold(id, fn) {
-  const el = $(id);
-  el.addEventListener('pointerdown', e => { e.preventDefault(); try { el.setPointerCapture(e.pointerId); } catch (_) {} fn(true); });
-  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(ev => el.addEventListener(ev, () => fn(false)));
-  el.addEventListener('contextmenu', e => e.preventDefault());
+  const e0 = $(id);
+  e0.addEventListener('pointerdown', e => { e.preventDefault(); try { e0.setPointerCapture(e.pointerId); } catch (_) {} fn(true); });
+  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(ev => e0.addEventListener(ev, () => fn(false)));
+  e0.addEventListener('contextmenu', e => e.preventDefault());
 }
 hold('jump', setJump); hold('duck', setDuck);
 cv.addEventListener('pointerdown', e => { if (mode === 'menu') return; e.preventDefault(); setJump(true); });
