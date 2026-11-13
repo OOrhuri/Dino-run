@@ -40,6 +40,12 @@
   h3 { margin: 0 0 6px; font-size: 16px; }
   #back { position: absolute; top: 10px; right: 10px; height: 36px; padding: 0 14px; border-radius: 18px; border: none;
     background: #2a3245; color: #fff; font-size: 14px; font-family: inherit; z-index: 2; }
+  .chars { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip { flex: 1; min-width: 62px; height: 46px; border-radius: 12px; border: 2px solid transparent; background: #2a3245; color: #fff; font-size: 14px; font-family: inherit; }
+  .chip.sel { border-color: #ffd200; background: #3a3420; }
+  .colors { display: flex; gap: 9px; justify-content: center; margin-top: 10px; flex-wrap: wrap; }
+  .sw { width: 30px; height: 30px; border-radius: 50%; border: 3px solid transparent; padding: 0; }
+  .sw.sel { border-color: #fff; box-shadow: 0 0 0 2px #000 inset; }
   .hidden { display: none !important; }
 </style>
 </head>
@@ -57,6 +63,14 @@
 const cv = document.getElementById('c'), g = cv.getContext('2d');
 const CX = 120, CY = 120, GROUND = 165, DX = 40, MAX_LEVEL = 10;
 const $ = id => document.getElementById(id);
+// older phones don't have roundRect: without this the game freezes on them
+if (typeof CanvasRenderingContext2D !== 'undefined' && !CanvasRenderingContext2D.prototype.roundRect) {
+  CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h, r) {
+    r = Math.max(0, Math.min(r, w / 2, h / 2));
+    this.moveTo(x + r, y); this.arcTo(x + w, y, x + w, y + h, r); this.arcTo(x + w, y + h, x, y + h, r);
+    this.arcTo(x, y + h, x, y, r); this.arcTo(x, y, x + w, y, r); this.closePath();
+  };
+}
 
 // ---- level settings ----
 const levelSpeed   = lv => Math.min(3 + (lv - 1) * 0.5, 7.5);
@@ -69,6 +83,13 @@ const POINTS = [10, 8, 6, 5, 4, 3, 2, 1];           // race: points by finishing
 const FINISH_WAIT_MS = 15000;                       // race: level ends this long after the first finisher
 const MAX_PLAYERS = 8;
 const COLORS = ['#9650dc', '#f08a24', '#2bb3c0', '#e0457b', '#5cbf3a', '#3a6fe0', '#d4b106', '#a1887f'];
+const CHARS = [ { id: 'dino', emoji: '🦖', name: 'דינו' }, { id: 'robot', emoji: '🤖', name: 'רובוט' }, { id: 'penguin', emoji: '🐧', name: 'פינגווין' },
+                { id: 'cat', emoji: '🐱', name: 'חתול' }, { id: 'frog', emoji: '🐸', name: 'צפרדע' } ];
+const charEmoji = id => (CHARS.find(c => c.id === id) || CHARS[0]).emoji;
+function loadPref(k, ok, def) { try { const v = localStorage.getItem(k); return ok(v) ? v : def; } catch (e) { return def; } }
+function savePref(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+let selChar = loadPref('dino-char', v => CHARS.some(c => c.id === v), 'dino');
+let selColor = loadPref('dino-color', v => COLORS.includes(v), COLORS[0]);
 
 const THEMES = [
   { sky:'#78bef0', sand:'#e6c882', speck:'#b4965a', text:'#141e3c', cloud:'#ffffff' },
@@ -136,7 +157,70 @@ function dinoShape(x, b, duck, col, legA) {
     rect(x+18, b-5, 4, legA ? 3 : 5, col);
   }
 }
-function drawDino(duck, col = C.dino, running = true) { dinoShape(DX, Math.round(dinoY), duck, col, running && onGround && Math.floor(now / 90) % 2); }
+// All characters share the same size and hitbox, so nobody gets an advantage.
+function robotShape(x, b, duck, col, legA) {
+  const metal = '#555', visor = '#7ff';
+  if (!duck) {
+    rect(x+11, b-8, 4, legA ? 8 : 5, metal); rect(x+21, b-8, 4, legA ? 5 : 8, metal);
+    rr(x+8, b-24, 22, 16, 3, col); rect(x+13, b-20, 8, 6, 'rgba(255,255,255,.35)');
+    rr(x+12, b-37, 20, 13, 3, col); rect(x+21, b-33, 9, 4, visor);
+    rect(x+21, b-42, 2, 5, metal); circ(x+22, b-43, 2, C.heart);
+    rect(x+29, b-20, 6, 3, col);
+  } else {
+    rr(x+4, b-15, 26, 11, 3, col); rr(x+24, b-19, 14, 11, 3, col); rect(x+30, b-16, 7, 3, visor);
+    rect(x+8, b-4, 4, legA ? 4 : 3, metal); rect(x+20, b-4, 4, legA ? 3 : 4, metal);
+  }
+}
+function penguinShape(x, b, duck, col, legA) {
+  const beak = '#f5a623';
+  if (!duck) {
+    rr(x+9, b-36, 20, 33, 10, col); rr(x+15, b-29, 13, 24, 6, '#fff');
+    circ(x+23, b-31, 2.5, '#fff'); rect(x+23, b-32, 2, 2, '#111');
+    tri(x+28, b-30, x+28, b-26, x+35, b-28, beak);
+    rect(x + (legA ? 12 : 14), b-3, 6, 3, beak); rect(x + (legA ? 22 : 20), b-3, 6, 3, beak);
+  } else {
+    rr(x+3, b-16, 32, 13, 6, col); rr(x+7, b-9, 25, 6, 3, '#fff');
+    circ(x+28, b-12, 2, '#fff'); rect(x+28, b-13, 1, 1, '#111');
+    tri(x+34, b-13, x+34, b-9, x+39, b-11, beak);
+  }
+}
+function catShape(x, b, duck, col, legA) {
+  if (!duck) {
+    rr(x+1, b-34, 4, 16, 2, col);
+    rr(x+5, b-22, 22, 13, 6, col);
+    circ(x+27, b-27, 8, col);
+    tri(x+21, b-32, x+23, b-39, x+27, b-33, col); tri(x+28, b-33, x+32, b-39, x+34, b-30, col);
+    rect(x+28, b-29, 3, 3, '#fff'); rect(x+29, b-28, 2, 2, '#111'); rect(x+33, b-26, 2, 2, '#f9a');
+    rect(x+8, b-9, 3, legA ? 9 : 6, col); rect(x+15, b-9, 3, legA ? 6 : 9, col); rect(x+21, b-9, 3, legA ? 9 : 6, col);
+  } else {
+    rr(x, b-14, 10, 3, 1, col); rr(x+5, b-12, 24, 9, 4, col); circ(x+31, b-11, 6, col);
+    tri(x+27, b-15, x+29, b-20, x+31, b-15, col); tri(x+31, b-15, x+34, b-20, x+36, b-13, col);
+    rect(x+32, b-13, 2, 2, '#fff');
+    rect(x+9, b-3, 3, 3, col); rect(x+21, b-3, 3, 3, col);
+  }
+}
+function frogShape(x, b, duck, col, legA) {
+  const eye = (cx, cy, r) => { circ(cx, cy, r, col); circ(cx + 1, cy - 1, r - 2, '#fff'); rect(cx + 1, cy - 2, 2, 2, '#111'); };
+  if (!duck) {
+    rr(x+5, b-10, 11, 8, 4, col);
+    rr(x+8, b-26, 22, 20, 8, col); rr(x+12, b-18, 12, 10, 4, 'rgba(255,255,255,.35)');
+    eye(x+19, b-29, 5); eye(x+27, b-29, 5);
+    rect(x+20, b-17, 10, 1, '#111');
+    rect(x + (legA ? 24 : 22), b-6, 7, 6, col);
+  } else {
+    rr(x+4, b-14, 30, 12, 6, col); eye(x+22, b-14, 4); eye(x+29, b-14, 4);
+    rect(x+26, b-7, 7, 1, '#111');
+    rect(x+4, b-4, 8, 4, col); rect(x+26, b-4, 8, 4, col);
+  }
+}
+function charShape(kind, x, b, duck, col, legA) {
+  if (kind === 'robot') robotShape(x, b, duck, col, legA);
+  else if (kind === 'penguin') penguinShape(x, b, duck, col, legA);
+  else if (kind === 'cat') catShape(x, b, duck, col, legA);
+  else if (kind === 'frog') frogShape(x, b, duck, col, legA);
+  else dinoShape(x, b, duck, col, legA);
+}
+function drawDino(duck, col = selColor, running = true) { charShape(selChar, DX, Math.round(dinoY), duck, col, running && onGround && Math.floor(now / 90) % 2); }
 function drawCactus(cx, h) {
   const top = GROUND - h;
   rr(cx-3, top, 6, h, 3, C.cactus);
@@ -280,7 +364,7 @@ let myId = '', myName = '', code = '';
 let players = {};                      // id -> {id, name, color, pts, p1, p2, p3, inRace, d, y, duck, fin, ft}
 let phase = 'lobby';                   // lobby | count | race | results | final
 let course = null, d = 0, stunUntil = 0, raceStart = 0, myFin = false, myFt = 0, firstFinishAt = 0;
-let lastResults = null, sendT = 0, roomSendT = 0, resultsShownAt = 0;
+let lastResults = null, sendT = 0, roomSendT = 0, lastHostMsg = 0;
 
 function cleanName(s) { return String(s || '').replace(/[^\p{L}\p{N} _-]/gu, '').trim().slice(0, 12); }
 function mulberry32(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
@@ -296,7 +380,7 @@ const me = () => players[myId];
 function sendTo(c, msg) { try { if (c && c.open) c.send(msg); } catch (e) {} }
 function broadcast(msg) { for (const c of guestConns.values()) sendTo(c, msg); }
 function rosterMsg() {
-  return { t: 'room', phase, level, players: Object.values(players).map(p => ({ id: p.id, name: p.name, color: p.color, pts: p.pts, p1: p.p1, p2: p.p2, p3: p.p3, inRace: p.inRace })) };
+  return { t: 'room', phase, level, players: Object.values(players).map(p => ({ id: p.id, name: p.name, color: p.color, char: p.char, pts: p.pts, p1: p.p1, p2: p.p2, p3: p.p3, inRace: p.inRace })) };
 }
 function sendRoster() { broadcast(rosterMsg()); renderRoomPanel(); }
 
@@ -304,7 +388,12 @@ function sendRoster() { broadcast(rosterMsg()); renderRoomPanel(); }
 function onGuestData(id, m) {                   // host side
   if (!m || typeof m !== 'object') return;
   const p = players[id];
-  if (m.t === 'hello' && p) { p.name = cleanName(m.name) || 'PLAYER'; sendRoster(); }
+  if (m.t === 'hello' && p) {
+    p.name = cleanName(m.name) || 'PLAYER';
+    if (CHARS.some(c => c.id === m.char)) p.char = m.char;
+    if (COLORS.includes(m.color) && !Object.values(players).some(q => q.id !== id && q.color === m.color)) p.color = m.color;
+    sendRoster();
+  }
   else if (m.t === 'st' && p) {
     if (m.lv !== level || !p.inRace || (phase !== 'race' && phase !== 'count')) return;   // ignore updates left over from another level
     p.d = +m.d || 0; p.y = +m.y || GROUND; p.duck = !!m.duck;
@@ -335,10 +424,10 @@ function onHostData(m) {                        // guest side
 function hostAddGuest(c) {
   if (Object.keys(players).length >= MAX_PLAYERS) { c.on('open', () => { sendTo(c, { t: 'full' }); setTimeout(() => c.close(), 500); }); return; }
   const used = new Set(Object.values(players).map(p => p.color));
-  const color = COLORS.find(x => !used.has(x)) || COLORS[0];
+  const color = COLORS.find(x => !used.has(x)) || COLORS[1];
   c.on('open', () => {
     guestConns.set(c.peer, c);
-    players[c.peer] = { id: c.peer, name: 'PLAYER', color, pts: 0, p1: 0, p2: 0, p3: 0, inRace: false, d: 0, y: GROUND, duck: false, fin: false, ft: 0 };
+    players[c.peer] = { id: c.peer, name: 'PLAYER', color, char: 'dino', pts: 0, p1: 0, p2: 0, p3: 0, inRace: false, d: 0, y: GROUND, duck: false, fin: false, ft: 0 };
     sendRoster();
   });
   c.on('data', m => onGuestData(c.peer, m));
@@ -396,7 +485,7 @@ function raceTick(edge) {
   const blink = Math.floor(now / 500) % 2;
   const m = me();
   if (m) { m.d = d; m.y = dinoY; m.duck = ducking; m.fin = m.fin || myFin; if (myFin) m.ft = myFt; }
-  const myColor = m ? m.color : C.dino;
+  const myColor = m ? m.color : selColor;
 
   switch (state) {
     case 'RLOBBY': {
@@ -439,7 +528,7 @@ function raceTick(edge) {
       for (const p of Object.values(players)) {
         if (p.id === myId || !p.inRace) continue;
         const sx = DX + ((p.fin ? course.L : p.d) - d);
-        if (sx > -40 && sx < 245) dinoShape(sx, Math.round(p.y || GROUND), !!p.duck, p.color, !p.fin && Math.floor(now / 90) % 2);
+        if (sx > -40 && sx < 245) charShape(p.char, sx, Math.round(p.y || GROUND), !!p.duck, p.color, !p.fin && Math.floor(now / 90) % 2);
       }
       g.globalAlpha = 1;
       const stunned = now < stunUntil;
@@ -486,8 +575,15 @@ function raceTick(edge) {
     case 'RLOST':
       drawWorld(0); drawDino(true, myColor);
       text('HOST', 70, 3, C.heart); text('LEFT', 100, 3, C.heart);
-      text('BACK TO MENU ↗', 140, 1, T.text);
+      if (blink) text('PRESS JUMP TO REJOIN', 140, 1, T.text);
+      if (edge && now - stateTime > 800) { const c = code; disconnect(); renderRaceSetup(); $('iCode').value = c.toUpperCase(); $('nStatus').textContent = 'אפשר להצטרף שוב כשהמארח פותח את החדר.'; }
       break;
+  }
+
+  // guests: say so when the host stopped answering (host switched app / locked the screen)
+  if (!isHost && state !== 'RLOST' && performance.now() - lastHostMsg > 4000) {
+    rect(0, 196, 240, 30, 'rgba(0,0,0,.7)');
+    text('HOST NOT RESPONDING', 200, 1, C.gold); text('HOST MUST KEEP THE GAME OPEN', 212, 1, '#fff');
   }
 
   // network: ~10 updates per second
@@ -519,13 +615,13 @@ function connect(c, host) {
       myId = host ? 'host' : id;
       players = {};
       if (host) {
-        players[myId] = { id: myId, name: myName || 'HOST', color: COLORS[0], pts: 0, p1: 0, p2: 0, p3: 0, inRace: false, d: 0, y: GROUND, duck: false, fin: false, ft: 0 };
+        players[myId] = { id: myId, name: myName || 'HOST', color: selColor, char: selChar, pts: 0, p1: 0, p2: 0, p3: 0, inRace: false, d: 0, y: GROUND, duck: false, fin: false, ft: 0 };
         peer.on('connection', hostAddGuest);
         finish('ok');
       } else {
-        hostConn = peer.connect(PEER_PREFIX + code, { reliable: true });
-        hostConn.on('open', () => { sendTo(hostConn, { t: 'hello', name: myName }); finish('ok'); });
-        hostConn.on('data', onHostData);
+        hostConn = peer.connect(PEER_PREFIX + code, { reliable: true }); lastHostMsg = performance.now();
+        hostConn.on('open', () => { sendTo(hostConn, { t: 'hello', name: myName, char: selChar, color: selColor }); finish('ok'); });
+        hostConn.on('data', m => { lastHostMsg = performance.now(); onHostData(m); });
         hostConn.on('close', () => { hostConn = null; if (mode === 'race' && state !== 'IDLE') setState('RLOST'); });
         hostConn.on('error', () => {});
         setTimeout(() => finish(hostConn && hostConn.open ? 'ok' : 'timeout'), 12000);
@@ -551,15 +647,18 @@ function disconnect() {
 // ======================= MENU / UI =======================
 function idleTick() {
   drawWorld(speed); drawDino(false);
-  text('DINO', 62, 4, T.text); text('RUN', 100, 3, C.dino);
+  text('DINO', 62, 4, T.text); text('RUN', 100, 3, selColor);
 }
 function tick() {
   const edge = jumpEdge; jumpEdge = false;
-  g.save(); g.beginPath(); g.arc(CX, CY, 120, 0, Math.PI*2); g.clip();
-  if (mode === 'solo') soloTick(edge);
-  else if (mode === 'race' && state !== 'IDLE') raceTick(edge);
-  else idleTick();
-  g.restore();
+  g.save();
+  try {
+    g.beginPath(); g.arc(CX, CY, 120, 0, Math.PI*2); g.clip();
+    if (mode === 'solo') soloTick(edge);
+    else if (mode === 'race' && state !== 'IDLE') raceTick(edge);
+    else idleTick();
+  } catch (e) { console.error(e); }      // one bad frame must never freeze the game
+  finally { g.restore(); g.globalAlpha = 1; }
 }
 
 const panel = $('panel'), pad = $('pad'), back = $('back');
@@ -574,9 +673,26 @@ function renderMenu() {
   panel.innerHTML = `
     <button class="big solo" id="bSolo">▶ משחק לבד</button>
     <button class="big duo" id="bRace">🏁 מירוץ עם חברים — אונליין</button>
+    <div class="card"><h3>בחר דמות</h3><div class="chars" id="chars"></div><div class="colors" id="colors"></div></div>
     <div class="note">במירוץ: עד ${MAX_PLAYERS} שחקנים רצים באותו מסלול. מי שנתקע במכשול מתעכב רגע. בכל שלב מקבלים נקודות לפי סדר ההגעה, ואחרי ${MAX_LEVEL} שלבים יש מנצח.</div>`;
-  $('bSolo').onclick = () => { mode = 'solo'; lives = 3; startLevel(1); panel.innerHTML = ''; show(pad, true); show(back, true); $('jumpLabel').textContent = 'קפיצה'; };
+  renderPickers();
+  $('bSolo').onclick = () => { keepAwake(); mode = 'solo'; lives = 3; startLevel(1); panel.innerHTML = ''; show(pad, true); show(back, true); $('jumpLabel').textContent = 'קפיצה'; };
   $('bRace').onclick = renderRaceSetup;
+}
+function renderPickers() {
+  const chars = $('chars'), colors = $('colors');
+  chars.textContent = ''; colors.textContent = '';
+  for (const c of CHARS) {
+    const b = el('button', { className: 'chip' + (c.id === selChar ? ' sel' : ''), textContent: c.emoji + ' ' + c.name });
+    b.onclick = () => { selChar = c.id; savePref('dino-char', c.id); renderPickers(); };
+    chars.append(b);
+  }
+  for (const col of COLORS) {
+    const b = el('button', { className: 'sw' + (col === selColor ? ' sel' : '') });
+    b.style.background = col;
+    b.onclick = () => { selColor = col; savePref('dino-color', col); renderPickers(); };
+    colors.append(b);
+  }
 }
 function newCode() { const a = 'abcdefghjkmnpqrstuvwxyz23456789'; let s = ''; for (let i = 0; i < 4; i++) s += a[Math.floor(Math.random() * a.length)]; return s; }
 function showSetupError(t) { disconnect(); renderRaceSetup(); const n = $('nStatus'); if (n) n.textContent = t; }
@@ -589,11 +705,13 @@ function renderRaceSetup() {
     <button class="big duo" id="bNew">צור חדר חדש (אתה המארח)</button>
     <div class="row"><input id="iCode" maxlength="4" placeholder="קוד" dir="ltr" autocapitalize="characters"><button class="big ghost" id="bJoin">הצטרף</button></div>
     <div class="note" id="nStatus"></div>
-    <div class="note">כולם צריכים אינטרנט. אם החיבור לא מצליח ברשת סלולרית — נסו על Wi-Fi.</div>`;
+    <div class="note">כולם צריכים אינטרנט. אם החיבור לא מצליח ברשת סלולרית — נסו על Wi-Fi.</div>
+    <div class="note">⚠️ המארח צריך להשאיר את המשחק פתוח על המסך עד הסוף. אם הוא עובר לאפליקציה אחרת או נועל את המסך — המשחק נעצר לכולם. שלחו את הקוד לפני שמתחילים.</div>`;
   const iName = $('iName'); iName.value = loadName();
   const go = async (c, host) => {
     myName = cleanName(iName.value); saveName(myName);
     $('nStatus').textContent = 'מתחבר...';
+    keepAwake();
     const r = await connect(c, host);
     if (r !== 'ok') {
       disconnect();
@@ -633,7 +751,7 @@ function renderRoomPanel() {
   standings().forEach((p, i) => {
     const row = showResults ? lastResults.rows.find(r => r.id === p.id) : null;
     const lvl = row ? (row.place > 0 ? `${row.place} (+${row.got})` : row.place === 0 ? 'לא סיים' : '—') : '';
-    const nameCell = el('td', {}, [el('span', { className: 'dot', style: `background:${p.color}` }), document.createTextNode((p.name || 'PLAYER') + (p.id === myId ? ' (אתה)' : ''))]);
+    const nameCell = el('td', {}, [el('span', { className: 'dot', style: `background:${p.color}` }), document.createTextNode(charEmoji(p.char) + ' ' + (p.name || 'PLAYER') + (p.id === myId ? ' (אתה)' : ''))]);
     tbl.append(el('tr', { className: p.id === myId ? 'me' : '' }, [el('td', { className: 'n', textContent: i + 1 }), nameCell,
       el('td', { className: 'n', textContent: lvl }), el('td', { className: 'n', textContent: p.pts }), el('td', { className: 'n', textContent: `${p.p1}·${p.p2}·${p.p3}` })]));
   });
@@ -645,12 +763,20 @@ back.onclick = () => { disconnect(); renderMenu(); };
 
 // fixed 28ms step
 let acc = 0, last = performance.now();
-function frame(t) {
-  acc += Math.min(t - last, 200); last = t;
+function step(t, maxGap) {
+  acc += Math.min(Math.max(t - last, 0), maxGap); last = t;
   while (acc >= 28) { now += 28; tick(); acc -= 28; }
-  requestAnimationFrame(frame);
 }
+function frame(t) { step(t, 200); requestAnimationFrame(frame); }
 requestAnimationFrame(frame);
+// When the page is in the background the browser pauses animation frames. Keep the
+// game clock (and the host's job of running the race) ticking as well as the browser allows.
+setInterval(() => { if (document.hidden) step(performance.now(), 1000); }, 250);
+
+// keep the screen on while playing
+let wakeLock = null;
+async function keepAwake() { try { if (navigator.wakeLock && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } } catch (e) {} }
+document.addEventListener('visibilitychange', () => { if (!document.hidden && mode !== 'menu') keepAwake(); });
 renderMenu();
 
 // ---- input ----
