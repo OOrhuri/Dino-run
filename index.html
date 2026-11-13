@@ -1,0 +1,534 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Dino Run</title>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; background: #111; color: #eee; font-family: system-ui, sans-serif;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; touch-action: manipulation; overflow: hidden; }
+  .wrap { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px; padding: 10px; box-sizing: border-box; position: relative; }
+  .bezel { width: min(84vw, 46vh, 400px); aspect-ratio: 1; border-radius: 50%; padding: 10px; background: #1d3a8a;
+    box-shadow: 0 0 0 4px #0b1d4f, 0 10px 30px rgba(0,0,0,.6); box-sizing: border-box; flex: none; }
+  canvas { width: 100%; height: 100%; border-radius: 50%; display: block; background: #000; }
+  .pad { display: flex; gap: 16px; width: min(92vw, 420px); }
+  .btn { flex: 1; height: 84px; border-radius: 22px; border: none; font-size: 22px; font-weight: 700; color: #fff;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; touch-action: none; font-family: inherit; }
+  .btn small { font-size: 13px; font-weight: 500; opacity: .85; }
+  #jump { background: #7c3aed; box-shadow: 0 6px 0 #4c1d95; }
+  #duck { background: #334155; box-shadow: 0 6px 0 #1e293b; }
+  .btn.on { transform: translateY(4px); box-shadow: 0 2px 0 rgba(0,0,0,.5); }
+  #panel { width: min(92vw, 420px); display: flex; flex-direction: column; gap: 10px; }
+  .big { height: 58px; border-radius: 16px; border: none; font-size: 18px; font-weight: 700; color: #fff; font-family: inherit; }
+  .solo { background: #7c3aed; } .duo { background: #ea7a1a; } .ghost { background: #2a3245; }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  input { height: 50px; border-radius: 14px; border: 2px solid #3a445c; background: #1b2132; color: #fff; font-size: 18px;
+    padding: 0 12px; box-sizing: border-box; font-family: inherit; text-align: center; min-width: 0; -webkit-user-select: text; user-select: text; }
+  .code { font-size: 15px; text-align: center; background: #1b2132; border-radius: 14px; padding: 10px; line-height: 1.5; }
+  .code b { font-size: 26px; letter-spacing: 4px; color: #ffd200; direction: ltr; display: inline-block; }
+  .note { font-size: 13px; opacity: .7; text-align: center; line-height: 1.5; }
+  .warn { font-size: 14px; background: #3a2414; border-radius: 14px; padding: 10px 12px; line-height: 1.5; }
+  #back { position: absolute; top: 10px; right: 10px; height: 36px; padding: 0 14px; border-radius: 18px; border: none;
+    background: #2a3245; color: #fff; font-size: 14px; font-family: inherit; z-index: 2; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <button id="back" class="hidden">→ תפריט</button>
+  <div class="bezel"><canvas id="c" width="240" height="240"></canvas></div>
+  <div id="panel"></div>
+  <div class="pad hidden" id="pad">
+    <button class="btn" id="duck">⬇<small>התכופפות</small></button>
+    <button class="btn" id="jump">⬆<small id="jumpLabel">קפיצה</small></button>
+  </div>
+</div>
+<script>
+const cv = document.getElementById('c'), g = cv.getContext('2d');
+const CX = 120, CY = 120, GROUND = 165, DX = 40, MAX_LEVEL = 10;
+const $ = id => document.getElementById(id);
+
+// ---- level settings ----
+const levelSpeed   = lv => Math.min(3 + (lv - 1) * 0.5, 7.5);
+const levelGoal    = lv => 6 + lv * 2;
+const levelTypes   = lv => Math.min(lv, 5);
+const levelGapRand = lv => Math.max(30, 130 - lv * 10);
+const trackLen     = lv => 2500 + lv * 900;      // online: distance between the two players
+
+const THEMES = [
+  { sky:'#78bef0', sand:'#e6c882', speck:'#b4965a', text:'#141e3c', cloud:'#ffffff' },
+  { sky:'#fa8c50', sand:'#c88246', speck:'#965a32', text:'#32141e', cloud:'#ffc8aa' },
+  { sky:'#463278', sand:'#966e5a', speck:'#64463c', text:'#ffffff', cloud:'#6e5aa0' },
+  { sky:'#0a0f28', sand:'#46465a', speck:'#28283c', text:'#ffffff', cloud:'#283250' },
+  { sky:'#3c0a0a', sand:'#782814', speck:'#dc5a14', text:'#ffe6c8', cloud:'#641e1e' },
+];
+const C = { dino:'#9650dc', friend:'#f08a24', eye:'#fff', cactus:'#28963c', bird:'#d23c46', heart:'#ff3250', gold:'#ffd200', dim:'#505050' };
+let T = THEMES[0];
+
+const CAC_S = 0, CAC_L = 1, CAC_D = 2, BIRD_LOW = 3, BIRD_HIGH = 4;
+const obWidth = t => t === CAC_S ? 10 : t === CAC_L ? 14 : t === CAC_D ? 26 : 22;
+function obBox(o) {
+  const x0 = o.x, x1 = o.x + obWidth(o.type);
+  const y = { [CAC_S]:[GROUND-22,GROUND], [CAC_L]:[GROUND-34,GROUND], [CAC_D]:[GROUND-22,GROUND],
+              [BIRD_LOW]:[GROUND-18,GROUND-6], [BIRD_HIGH]:[GROUND-38,GROUND-24] }[o.type];
+  return [x0, y[0], x1, y[1]];
+}
+
+// ---- shared state ----
+let mode = 'menu';           // 'menu' | 'solo' | 'online'
+let state = 'IDLE';
+let level = 1, lives = 3, cleared = 0, spawned = 0, speed = levelSpeed(1);
+let dinoY = GROUND, vy = 0, onGround = true, ducking = false, nextGap = 0;
+let stateTime = 0, invulnUntil = 0, now = 0;
+let obs = [];
+let input = { jump: false, duck: false }, jumpEdge = false;
+const rnd = (a, b) => a + (b - a) * Math.random();
+const clouds = [0,1,2].map(() => [rnd(0,240), rnd(55,110)]);
+const specks = Array.from({length:24}, () => [Math.random()*240, GROUND + 4 + Math.random()*24]);
+
+function setState(s) { state = s; stateTime = now; }
+function resetRun() {
+  speed = levelSpeed(level); T = THEMES[(level - 1) % 5];
+  cleared = 0; spawned = 0; obs = []; dinoY = GROUND; vy = 0; onGround = true; ducking = false; nextGap = 0;
+}
+function startLevel(lv) { level = lv; resetRun(); setState('INTRO'); }
+
+// ---- drawing helpers ----
+function rr(x, y, w, h, r, col) { g.fillStyle = col; g.beginPath(); g.roundRect(x, y, w, h, r); g.fill(); }
+function rect(x, y, w, h, col) { g.fillStyle = col; g.fillRect(x, y, w, h); }
+function tri(a, b, c, d, e, f, col) { g.fillStyle = col; g.beginPath(); g.moveTo(a,b); g.lineTo(c,d); g.lineTo(e,f); g.fill(); }
+function circ(x, y, r, col) { g.fillStyle = col; g.beginPath(); g.arc(x, y, r, 0, Math.PI*2); g.fill(); }
+function text(s, y, size, col, x = CX) {
+  g.fillStyle = col; g.font = `bold ${size * 8}px monospace`; g.textAlign = 'center'; g.textBaseline = 'top';
+  g.fillText(s, x, y);
+}
+
+function dinoShape(x, b, duck, col, legA) {
+  if (!duck) {
+    tri(x, b-20, x+9, b-24, x+9, b-12, col);
+    rr(x+6, b-25, 18, 17, 5, col);
+    rr(x+16, b-36, 17, 13, 4, col);
+    rect(x+26, b-33, 3, 3, C.eye);
+    rect(x+25, b-26, 7, 1, C.eye);
+    rect(x+22, b-17, 5, 2, col);
+    rect(x+9, b-9, 4, legA ? 9 : 5, col);
+    rect(x+17, b-9, 4, legA ? 5 : 9, col);
+  } else {
+    tri(x, b-12, x+6, b-14, x+6, b-8, col);
+    rr(x+4, b-15, 24, 11, 5, col);
+    rr(x+22, b-19, 15, 11, 4, col);
+    rect(x+31, b-17, 3, 3, C.eye);
+    rect(x+9, b-5, 4, legA ? 5 : 3, col);
+    rect(x+18, b-5, 4, legA ? 3 : 5, col);
+  }
+}
+function drawDino(duck) { dinoShape(DX, Math.round(dinoY), duck, C.dino, onGround && Math.floor(now / 90) % 2); }
+// friend: drawn facing left, sx = left edge on screen
+function drawFriend(sx, b, duck, running) {
+  g.save(); g.translate(sx + 38, 0); g.scale(-1, 1);
+  dinoShape(0, Math.round(b), duck, C.friend, running && Math.floor(now / 90) % 2);
+  g.restore();
+}
+function drawCactus(cx, h) {
+  const top = GROUND - h;
+  rr(cx-3, top, 6, h, 3, C.cactus);
+  rr(cx-7, top+7, 3, 8, 1, C.cactus); rect(cx-7, top+13, 5, 3, C.cactus);
+  rr(cx+4, top+4, 3, 8, 1, C.cactus); rect(cx+2, top+10, 5, 3, C.cactus);
+}
+function drawBird(x, top) {
+  tri(x, top+4, x+6, top+6, x, top+10, C.bird);
+  rr(x+4, top+4, 14, 7, 3, C.bird);
+  circ(x+19, top+6, 4, C.bird);
+  tri(x+22, top+4, x+22, top+8, x+27, top+6, C.gold);
+  rect(x+19, top+4, 2, 2, C.eye);
+  if (Math.floor(now / 150) % 2) tri(x+7, top+6, x+15, top+6, x+10, top-5, C.bird);
+  else tri(x+7, top+9, x+15, top+9, x+10, top+18, C.bird);
+}
+function drawObstacle(o) {
+  const x = Math.round(o.x);
+  if (o.type === CAC_S) drawCactus(x+5, 22);
+  else if (o.type === CAC_L) drawCactus(x+7, 34);
+  else if (o.type === CAC_D) { drawCactus(x+6, 22); drawCactus(x+20, 18); }
+  else if (o.type === BIRD_LOW) drawBird(x, GROUND-18);
+  else drawBird(x, GROUND-38);
+}
+function drawWorld(moving) {
+  rect(0, 0, 240, 240, T.sky);
+  for (const c of clouds) {
+    if (moving) { c[0] -= speed * 0.25; if (c[0] < -30) { c[0] = 260; c[1] = rnd(55, 110); } }
+    rr(c[0], c[1], 28, 9, 4, T.cloud); rr(c[0]+7, c[1]-5, 14, 9, 4, T.cloud);
+  }
+  rect(0, GROUND, 240, 240 - GROUND, T.sand);
+  rect(0, GROUND, 240, 1, T.speck);
+  for (const s of specks) {
+    if (moving) { s[0] -= speed; if (s[0] < 0) s[0] += 240; }
+    rect(Math.round(s[0]), Math.round(s[1]), 3, 1, T.speck);
+  }
+}
+function drawRing(f) {
+  g.strokeStyle = C.dim; g.lineWidth = 1; g.beginPath(); g.arc(CX, CY, 117, 0, Math.PI*2); g.stroke();
+  if (f > 0) { g.strokeStyle = C.gold; g.lineWidth = 5; g.lineCap = 'round';
+    g.beginPath(); g.arc(CX, CY, 116, -Math.PI/2, -Math.PI/2 + Math.PI*2*Math.min(f, 1)); g.stroke(); }
+}
+function drawHearts(n, y) {
+  for (let i = 0; i < n; i++) {
+    const hx = CX - (n - 1) * 7 + i * 14;
+    circ(hx-2, y, 3, C.heart); circ(hx+2, y, 3, C.heart); tri(hx-5, y+1, hx+5, y+1, hx, y+7, C.heart);
+  }
+}
+
+// ---- physics shared by both modes ----
+function physics() {
+  const up = input.jump, down = input.duck;
+  if (onGround && up) { vy = -11; onGround = false; }
+  if (!onGround) {
+    if (!up && vy < -5) vy = -5;
+    if (down) vy += 1.5;
+    vy += 0.8; dinoY += vy;
+    if (dinoY >= GROUND) { dinoY = GROUND; vy = 0; onGround = true; }
+  }
+  ducking = onGround && down;
+}
+function hitTest(o) {
+  const b = dinoY;
+  const dx0 = ducking ? DX+5 : DX+8, dx1 = ducking ? DX+34 : DX+30, dy0 = ducking ? b-16 : b-32, dy1 = b-1;
+  const [x0, y0, x1, y1] = obBox(o);
+  return dx0 < x1 && dx1 > x0 && dy0 < y1 && dy1 > y0;
+}
+function spawn(allowed) {
+  if (!allowed) return;
+  let rightmost = -1000;
+  for (const o of obs) rightmost = Math.max(rightmost, o.x + obWidth(o.type));
+  if (240 - rightmost < nextGap) return;
+  obs.push({ x: 245, type: Math.floor(Math.random() * levelTypes(level)), passed: false });
+  spawned++;
+  nextGap = speed * 30 + 40 + Math.random() * levelGapRand(level);
+}
+function moveObstacles(onPass, onHit) {
+  for (const o of obs) {
+    o.x -= o.type >= BIRD_LOW ? speed + 0.6 : speed;
+    const [, , x1] = obBox(o);
+    if (!o.passed && x1 < DX) { o.passed = true; onPass(); }
+    if (now > invulnUntil && !o.passed && hitTest(o)) { invulnUntil = now + 1200; o.passed = true; onHit(); }
+  }
+  obs = obs.filter(o => o.x + obWidth(o.type) > -5);
+}
+
+// ======================= SOLO =======================
+function soloTick(edge) {
+  const waited = now - stateTime > 600, blink = Math.floor(now / 500) % 2;
+  switch (state) {
+    case 'INTRO':
+      drawWorld(false); drawDino(false);
+      text('LEVEL ' + level, 70, 3, T.text);
+      text('JUMP ' + levelGoal(level) + ' OBSTACLES', 105, 1, T.text);
+      if (level === 4) text('WATCH OUT: BIRDS!', 120, 1, C.bird);
+      if (level === 5) text('HIGH BIRDS: DUCK!', 120, 1, C.bird);
+      if (now - stateTime > 1800 || (waited && edge)) { invulnUntil = now + 800; setState('PLAY'); }
+      break;
+    case 'PLAY':
+      physics();
+      spawn(spawned < levelGoal(level));
+      moveObstacles(() => cleared++, () => { lives--; cleared++; if (lives <= 0) setState('OVER'); });
+      if (state === 'PLAY' && cleared >= levelGoal(level)) { if (lives < 5) lives++; setState(level >= MAX_LEVEL ? 'WIN' : 'CLEAR'); }
+      drawWorld(true);
+      for (const o of obs) drawObstacle(o);
+      if (!(now < invulnUntil && Math.floor(now / 100) % 2)) drawDino(ducking);
+      text('LEVEL ' + level, 22, 2, T.text); drawHearts(lives, 48);
+      text(cleared + '/' + levelGoal(level), 195, 2, T.text);
+      drawRing(cleared / levelGoal(level));
+      break;
+    case 'CLEAR':
+      drawWorld(false); drawDino(false); drawRing(1);
+      text('LEVEL', 70, 3, C.gold); text('CLEAR!', 100, 3, C.gold);
+      if (now - stateTime > 1800 || (waited && edge)) startLevel(level + 1);
+      break;
+    case 'OVER':
+      drawWorld(false); drawDino(true);
+      text('GAME', 60, 3, C.heart); text('OVER', 90, 3, C.heart);
+      text('LEVEL ' + level, 125, 2, T.text);
+      if (blink) text('PRESS TO RETRY', 150, 1, T.text);
+      if (waited && edge) { lives = 3; startLevel(level); }
+      break;
+    case 'WIN':
+      drawWorld(true); drawDino(false);
+      text('YOU', 60, 4, C.gold); text('WIN!', 100, 4, C.gold);
+      if (blink) text('PRESS TO PLAY AGAIN', 145, 1, T.text);
+      if (waited && edge) { lives = 3; startLevel(1); }
+      break;
+  }
+}
+
+// ======================= ONLINE =======================
+// Each player runs toward the other. Distance between you = trackLen(level).
+// Your progress (d) + your friend's progress (fd) >= trackLen  ->  you meet.
+// Networking: PeerJS (free public broker) connects the two browsers directly.
+let peer = null, conn = null, isHost = false;
+let code = '', myName = '', myReady = false;
+let d = 0, fd = 0, fdTarget = 0, friend = null, friendSeen = 0, levelStart = 0, metTime = 0;
+let pres = {}, presDirty = false, presSent = 0;
+const hearts = [];
+const PEER_PREFIX = 'dinorun-v1-';
+
+function setPres(patch) { Object.assign(pres, patch); presDirty = true; }
+function flushPres() {
+  if (!conn || !conn.open) return;
+  if ((presDirty && now - presSent >= 100) || now - presSent >= 700) {   // changes ~10/s, heartbeat otherwise
+    presDirty = false; presSent = now;
+    try { conn.send(pres); } catch (e) {}
+  }
+}
+function cleanName(s) { return String(s || '').replace(/[^\p{L}\p{N} _-]/gu, '').slice(0, 12); }
+function findFriend() { if (!conn || !conn.open) friend = null; }
+
+function setStatus(t) { const n = $('nStatus'); if (n) n.textContent = t; }
+function wireConn(c) {
+  if (conn && conn !== c) { try { c.close(); } catch (e) {} return; }   // one friend per room
+  conn = c;
+  c.on('data', data => {
+    if (!data || typeof data !== 'object' || data.game !== 'dinorun') return;
+    friend = data; friendSeen = now;
+  });
+  c.on('open', () => { presDirty = true; presSent = -1000; friendSeen = now; });
+  c.on('close', () => { if (conn === c) { conn = null; friend = null; } });
+  c.on('error', () => {});
+}
+
+function joinRoom(c, host) {
+  return new Promise(resolve => {
+    if (typeof Peer === 'undefined') { resolve('nolib'); return; }
+    code = c; isHost = host;
+    pres = { game: 'dinorun', code, name: myName, level, stage: 'wait', ready: false, d: 0, y: GROUND, duck: false };
+    presDirty = true; presSent = -1000;
+    let done = false; const finish = r => { if (!done) { done = true; resolve(r); } };
+    peer = host ? new Peer(PEER_PREFIX + code) : new Peer();
+    peer.on('open', () => {
+      if (host) { peer.on('connection', wireConn); finish('ok'); }
+      else {
+        const c2 = peer.connect(PEER_PREFIX + code, { reliable: true });
+        wireConn(c2);
+        c2.on('open', () => finish('ok'));
+        setTimeout(() => finish(conn && conn.open ? 'ok' : 'timeout'), 12000);
+      }
+    });
+    peer.on('error', err => {
+      const t = err && err.type;
+      if (t === 'unavailable-id') finish('taken');
+      else if (t === 'peer-unavailable') finish('nohost');
+      else if (!done) finish('neterr');
+    });
+    peer.on('disconnected', () => { try { peer.reconnect(); } catch (e) {} });
+  });
+}
+async function leaveRoom() {
+  try { if (conn) conn.close(); } catch (e) {}
+  try { if (peer) peer.destroy(); } catch (e) {}
+  conn = null; peer = null; friend = null;
+}
+
+function onlineTick(edge) {
+  findFriend();
+  const blink = Math.floor(now / 500) % 2;
+  const friendGone = now - friendSeen > 4000 || (!conn && state !== 'OWAIT');
+  const fName = friend ? (cleanName(friend.name) || 'FRIEND') : 'FRIEND';
+
+  switch (state) {
+    case 'OWAIT': {
+      drawWorld(false); drawDino(false);
+      text('LEVEL ' + level, 40, 2, T.text);
+      if (!friend) {
+        text('WAITING FOR', 80, 2, T.text); text('A FRIEND...', 100, 2, T.text);
+        text('CODE ' + code.toUpperCase(), 130, 2, C.gold);
+      } else {
+        // a friend who is already further along pulls us to their level
+        if (friend.stage === 'wait' && friend.level > level) { level = friend.level; resetRun(); }
+        text(fName.toUpperCase(), 72, 2, C.friend); text('IS HERE!', 92, 2, T.text);
+        if (!myReady) { if (blink) text('PRESS JUMP = READY', 125, 1, T.text); if (edge) myReady = true; }
+        else text(friend.ready ? 'GET SET!' : 'WAITING FOR FRIEND', 125, 1, T.text);
+        if (myReady && friend.ready && friend.level === level && (friend.stage === 'wait' || friend.stage === 'count')) setState('OCOUNT');
+      }
+      setPres({ stage: 'wait', ready: myReady, level, d: 0 });
+      break;
+    }
+    case 'OCOUNT': {
+      drawWorld(false); drawDino(false);
+      const left = 3 - Math.floor((now - stateTime) / 1000);
+      text('LEVEL ' + level, 40, 2, T.text);
+      text(String(Math.max(left, 1)), 70, 6, C.gold);
+      text('RUN TO ' + fName.toUpperCase() + '!', 130, 1, T.text);
+      setPres({ stage: 'count', ready: true, level, d: 0 });
+      if (friendGone) { setState('OLOST'); break; }
+      if (left <= 0) { resetRun(); d = 0; fd = 0; fdTarget = 0; levelStart = now; invulnUntil = now + 800; setState('OPLAY'); }
+      break;
+    }
+    case 'OPLAY': {
+      const L = trackLen(level);
+      if (friend && friend.level === level && (friend.stage === 'play' || friend.stage === 'met')) fdTarget = Math.max(fdTarget, +friend.d || 0);
+      fd += (fdTarget - fd) * 0.25;
+      physics();
+      d += speed;
+      const gap = L - d - fdTarget;
+      spawn(gap > 320);
+      moveObstacles(() => {}, () => { d = Math.max(0, d - 150); });   // a hit pushes you back
+      setPres({ stage: 'play', level, d: Math.round(d), y: Math.round(dinoY), duck: ducking });
+
+      drawWorld(true);
+      for (const o of obs) drawObstacle(o);
+      const vis = L - d - fd;
+      if (vis < 240 && friend) drawFriend(DX + 40 + Math.max(vis, 0), +friend.y || GROUND, !!friend.duck, true);
+      if (!(now < invulnUntil && Math.floor(now / 100) % 2)) drawDino(ducking);
+      text('LEVEL ' + level, 22, 2, T.text);
+      // mini map: you from the left, friend from the right
+      const mx0 = 62, mx1 = 178, my = 50;
+      rect(mx0, my, mx1 - mx0, 2, T.text);
+      circ(mx0 + (mx1 - mx0) * Math.min(d / L, 1), my + 1, 5, C.dino);
+      circ(mx1 - (mx1 - mx0) * Math.min(fd / L, 1), my + 1, 5, C.friend);
+      text(fName.toUpperCase(), 195, 1, C.friend);
+      drawRing((d + fd) / L);
+
+      if (d + fdTarget >= L) { metTime = now - levelStart; for (let i = 0; i < 8; i++) hearts.push({ x: DX + 40 + rnd(-20, 20), y: GROUND - 40, v: rnd(0.5, 1.5) }); setState('OMET'); }
+      else if (friendGone) setState('OLOST');
+      break;
+    }
+    case 'OMET': {
+      dinoY = GROUND; onGround = true;
+      drawWorld(false); drawDino(false); drawFriend(DX + 42, GROUND, false, false);
+      for (const h of hearts) { h.y -= h.v; circ(h.x - 2, h.y, 3, C.heart); circ(h.x + 2, h.y, 3, C.heart); tri(h.x - 5, h.y + 1, h.x + 5, h.y + 1, h.x, h.y + 7, C.heart); }
+      text('YOU MET!', 50, 3, C.gold);
+      text((metTime / 1000).toFixed(1) + ' SEC', 85, 2, T.text);
+      drawRing(1);
+      setPres({ stage: 'met', level, d: Math.round(d) });
+      if (now - stateTime > 3000) {
+        hearts.length = 0;
+        if (level >= MAX_LEVEL) setState('OWIN');
+        else { level++; resetRun(); myReady = true; setState('OWAIT'); }
+      }
+      break;
+    }
+    case 'OLOST':
+      drawWorld(false); drawDino(false);
+      text('FRIEND', 70, 3, C.friend); text('LEFT', 100, 3, C.friend);
+      if (blink) text('PRESS JUMP TO WAIT', 140, 1, T.text);
+      setPres({ stage: 'wait', ready: false, level, d: 0 });
+      if (friend && friend.stage === 'wait') { myReady = false; setState('OWAIT'); }
+      else if (edge) { myReady = false; setState('OWAIT'); }
+      break;
+    case 'OWIN':
+      drawWorld(true); drawDino(false); drawFriend(DX + 42, GROUND, false, true);
+      text('YOU BOTH', 50, 3, C.gold); text('WIN!', 85, 4, C.gold);
+      if (blink) text('PRESS TO PLAY AGAIN', 145, 1, T.text);
+      setPres({ stage: 'met', level });
+      if (now - stateTime > 800 && edge) { level = 1; resetRun(); myReady = false; setState('OWAIT'); }
+      break;
+  }
+  flushPres();
+}
+
+// ======================= MENU / UI =======================
+function idleTick() {
+  drawWorld(true); drawDino(false);
+  text('DINO', 62, 4, T.text); text('RUN', 100, 3, C.dino);
+}
+
+function tick() {
+  const edge = jumpEdge; jumpEdge = false;
+  g.save(); g.beginPath(); g.arc(CX, CY, 120, 0, Math.PI*2); g.clip();
+  if (mode === 'solo') soloTick(edge);
+  else if (mode === 'online' && state !== 'IDLE') onlineTick(edge);
+  else idleTick();
+  g.restore();
+}
+
+const panel = $('panel'), pad = $('pad'), back = $('back');
+function show(el, on) { el.classList.toggle('hidden', !on); }
+function loadName() { try { return localStorage.getItem('dino-name') || ''; } catch (e) { return ''; } }
+function saveName(n) { try { localStorage.setItem('dino-name', n); } catch (e) {} }
+
+function renderMenu() {
+  mode = 'menu'; state = 'IDLE'; level = 1; resetRun();
+  show(pad, false); show(back, false);
+  panel.innerHTML = `
+    <button class="big solo" id="bSolo">▶ משחק לבד</button>
+    <button class="big duo" id="bDuo">👥 עם חבר — אונליין</button>
+    <div class="note">באונליין: אתה רץ משמאל, החבר מימין, ושניכם קופצים על מכשולים עד שנפגשים באמצע.</div>`;
+  $('bSolo').onclick = () => { mode = 'solo'; lives = 3; startLevel(1); panel.innerHTML = ''; show(pad, true); show(back, true); $('jumpLabel').textContent = 'קפיצה'; };
+  $('bDuo').onclick = renderOnlineSetup;
+}
+
+function newCode() { const a = 'abcdefghjkmnpqrstuvwxyz23456789'; let s = ''; for (let i = 0; i < 4; i++) s += a[Math.floor(Math.random() * a.length)]; return s; }
+
+function renderOnlineSetup() {
+  mode = 'online'; state = 'IDLE';
+  show(pad, false); show(back, true);
+  panel.innerHTML = `
+    <input id="iName" maxlength="12" placeholder="השם שלך">
+    <button class="big duo" id="bNew">צור חדר חדש</button>
+    <div class="row"><input id="iCode" maxlength="4" placeholder="קוד" dir="ltr" autocapitalize="characters"><button class="big ghost" id="bJoin">הצטרף</button></div>
+    <div class="note" id="nStatus"></div>
+    <div class="note">שני השחקנים צריכים להיות מחוברים לאינטרנט. ברשתות מסוימות (בעיקר סלולר) החיבור הישיר עלול לא לעבוד — אז כדאי לנסות כששניכם על Wi-Fi.</div>`;
+  const iName = $('iName'); iName.value = loadName();
+  const go = async (c, host) => {
+    myName = cleanName(iName.value); saveName(myName);
+    setStatus('מתחבר...');
+    const r = await joinRoom(c, host);
+    if (r !== 'ok') {
+      await leaveRoom();
+      if (r === 'taken') return go(newCode(), true);
+      setStatus({ nohost: 'לא נמצא חדר עם הקוד הזה. ודא שהחבר יצר חדר והמשחק פתוח אצלו.',
+                  timeout: 'החיבור לא הצליח. נסו ששניכם תהיו על Wi-Fi ונסו שוב.',
+                  nolib: 'לא הצלחתי לטעון את רכיב החיבור. בדוק אינטרנט ורענן.',
+                  neterr: 'בעיית רשת. נסה שוב בעוד רגע.' }[r] || 'שגיאה. נסה שוב.');
+      return;
+    }
+    level = 1; resetRun(); myReady = false; friendSeen = now; setState('OWAIT');
+    $('jumpLabel').textContent = 'קפיצה / מוכן';
+    show(pad, true);
+    panel.innerHTML = `<div class="code">קוד החדר: <b>${code.toUpperCase()}</b><br>${host ? 'שלח את הקוד לחבר — הוא בוחר "הצטרף" ומקליד אותו.' : 'מחובר!'}</div>`;
+  };
+  $('bNew').onclick = () => go(newCode(), true);
+  $('bJoin').onclick = () => {
+    const c = $('iCode').value.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+    if (c.length !== 4) { $('nStatus').textContent = 'הקוד צריך להיות 4 תווים'; return; }
+    go(c, false);
+  };
+}
+
+back.onclick = async () => { await leaveRoom(); renderMenu(); };
+
+// fixed 28ms step
+let acc = 0, last = performance.now();
+function frame(t) {
+  acc += Math.min(t - last, 200); last = t;
+  while (acc >= 28) { now += 28; tick(); acc -= 28; }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+renderMenu();
+
+// ---- input ----
+function setJump(v) { if (v && !input.jump) jumpEdge = true; input.jump = v; $('jump').classList.toggle('on', v); }
+function setDuck(v) { input.duck = v; $('duck').classList.toggle('on', v); }
+function hold(id, fn) {
+  const el = $(id);
+  el.addEventListener('pointerdown', e => { e.preventDefault(); try { el.setPointerCapture(e.pointerId); } catch (_) {} fn(true); });
+  ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(ev => el.addEventListener(ev, () => fn(false)));
+  el.addEventListener('contextmenu', e => e.preventDefault());
+}
+hold('jump', setJump); hold('duck', setDuck);
+cv.addEventListener('pointerdown', e => { if (mode === 'menu') return; e.preventDefault(); setJump(true); });
+cv.addEventListener('pointerup', () => setJump(false));
+cv.addEventListener('pointercancel', () => setJump(false));
+addEventListener('keydown', e => {
+  if (e.repeat || e.target.tagName === 'INPUT') return;
+  if (e.code === 'Space' || e.code === 'ArrowUp') { e.preventDefault(); setJump(true); }
+  if (e.code === 'ArrowDown') { e.preventDefault(); setDuck(true); }
+});
+addEventListener('keyup', e => {
+  if (e.code === 'Space' || e.code === 'ArrowUp') setJump(false);
+  if (e.code === 'ArrowDown') setDuck(false);
+});
+</script>
+</body>
+</html>
