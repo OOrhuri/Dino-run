@@ -136,6 +136,10 @@ function rr(x, y, w, h, r, col) { g.fillStyle = col; g.beginPath(); g.roundRect(
 function rect(x, y, w, h, col) { g.fillStyle = col; g.fillRect(x, y, w, h); }
 function tri(a, b, c, d, e, f, col) { g.fillStyle = col; g.beginPath(); g.moveTo(a,b); g.lineTo(c,d); g.lineTo(e,f); g.fill(); }
 function circ(x, y, r, col) { g.fillStyle = col; g.beginPath(); g.arc(x, y, r, 0, Math.PI*2); g.fill(); }
+function htext(s, y, px, col, x = CX) {
+  g.fillStyle = col; g.font = `bold ${px}px system-ui, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'top';
+  g.fillText(s, x, y);
+}
 function text(s, y, size, col, x = CX, align = 'center') {
   g.fillStyle = col; g.font = `bold ${size * 8}px monospace`; g.textAlign = align; g.textBaseline = 'top';
   g.fillText(s, x, y);
@@ -444,7 +448,54 @@ let completed = 0;                     // host: levels finished in this game
 let course = null, d = 0, stunUntil = 0, raceStart = 0, myFin = false, myFt = 0, firstFinishAt = 0;
 let lastResults = null, sendT = 0, roomSendT = 0, lastHostMsg = 0, lastRoomSig = '', lastAttempt = 0;
 let leaving = false, roomClosed = false;
-let raceId = 0;                        // id of the current race; progress messages from any other race are ignored
+let raceId = 0;
+// ---- FAMILY GAME: every player wins a different prize in every level ----
+let familyMode = false;
+const FAMILY_POINTS = 10;                // everyone gets the same points in a family game
+const FAMILY_WAIT_MS = 25000;            // more patience for the little ones
+let myStats = null;                      // what I did in the current race
+function newStats() { return { jumps: 0, air: 0, duck: 0, hits: 0, shave: 0, streak: 0, best: 0, maxH: 0 }; }
+// Each award: how to score a player (bigger = better) and when the winner really deserves it.
+const AWARDS = [
+  { id: 'fast',    emoji: '🏁', name: 'הכי מהיר',          score: p => p.fin ? -p.ft : -1e9 + p.d,            ok: p => p.fin },
+  { id: 'careful', emoji: '🛡️', name: 'הכי זהיר',          score: p => -p.s.hits * 1e6 + (p.fin ? -p.ft : -1e9 + p.d), ok: p => true },
+  { id: 'jumper',  emoji: '🦘', name: 'מלך הקפיצות',       score: p => p.s.jumps,  ok: p => p.s.jumps > 0 },
+  { id: 'high',    emoji: '🚀', name: 'הקפיצה הגבוהה',     score: p => p.s.maxH,   ok: p => p.s.maxH > 0 },
+  { id: 'air',     emoji: '🪂', name: 'הכי הרבה באוויר',   score: p => p.s.air,    ok: p => p.s.air > 0 },
+  { id: 'duck',    emoji: '🦆', name: 'אלוף ההתכופפות',    score: p => p.s.duck,   ok: p => p.s.duck > 0 },
+  { id: 'shave',   emoji: '😅', name: 'על הקשקש',          score: p => p.s.shave,  ok: p => p.s.shave > 0 },
+  { id: 'streak',  emoji: '🔥', name: 'הרצף הארוך',        score: p => p.s.best,   ok: p => p.s.best >= 2 },
+  { id: 'brave',   emoji: '💪', name: 'הכי אמיץ',          score: p => p.s.hits,   ok: p => p.s.hits > 0 },
+  { id: 'scenic',  emoji: '🐢', name: 'נהנה מהנוף',        score: p => p.fin ? p.ft : 1e9 - p.d, ok: p => true },
+];
+const SPIRIT = { id: 'spirit', emoji: '🌟', name: 'רוח ספורטיבית' };
+const awardById = id => AWARDS.find(a => a.id === id) || SPIRIT;
+// Give every racer exactly one award, each award to one racer. For every player we
+// prefer the award where they did best; a clear winner beats a tie, and an award the
+// player already got in earlier levels counts a bit against it, so prizes vary.
+function assignAwards(racers) {
+  const pairs = [];
+  for (const a of AWARDS) {
+    const list = racers.filter(p => a.ok(p)).map(p => ({ p, v: a.score(p) })).sort((x, y) => y.v - x.v);
+    list.forEach(e => {
+      const rank = list.findIndex(o => o.v === e.v) + 1;
+      const ties = list.filter(o => o.v === e.v).length;
+      const repeats = (e.p.had || []).filter(id => id === a.id).length;
+      pairs.push({ id: e.p.id, award: a.id, key: rank + repeats, ties, r: Math.random() });
+    });
+  }
+  pairs.sort((x, y) => x.key - y.key || x.ties - y.ties || x.r - y.r);
+  const got = {}, used = new Set();
+  for (const q of pairs) if (!got[q.id] && !used.has(q.award)) { got[q.id] = q.award; used.add(q.award); }
+  for (const p of racers) if (!got[p.id]) got[p.id] = 'spirit';
+  return got;
+}
+const statNum = v => Math.max(0, Math.min(1e7, +v || 0));
+function cleanStats(s) { const o = newStats(); if (s && typeof s === 'object') for (const k of Object.keys(o)) o[k] = statNum(s[k]); return o; }
+function awardSummary(list) {                  // ['fast','jumper','fast'] -> '🏁×2 🦘'
+  const n = {}; for (const id of list || []) n[id] = (n[id] || 0) + 1;
+  return Object.entries(n).map(([id, k]) => awardById(id).emoji + (k > 1 ? '×' + k : '')).join(' ');
+}                        // id of the current race; progress messages from any other race are ignored
 
 function cleanName(s) { return String(s || '').replace(/[^\p{L}\p{N} _-]/gu, '').trim().slice(0, 12); }
 const cleanId = s => String(s || '').replace(/[^a-z0-9]/gi, '').slice(0, 16);
@@ -469,7 +520,7 @@ const onlineCount = () => Object.values(players).filter(p => p.online !== false)
 function saveRoom() {
   if (!code || leaving) return;
   const data = { code, host: isHost, me: myId, name: myName, ts: Date.now() };
-  if (isHost) { data.completed = completed; data.players = Object.values(players).map(p => ({ id: p.id, name: p.name, color: p.color, char: p.char, pts: p.pts, p1: p.p1, p2: p.p2, p3: p.p3 })); }
+  if (isHost) { data.completed = completed; data.family = familyMode; data.players = Object.values(players).map(p => ({ id: p.id, name: p.name, color: p.color, char: p.char, pts: p.pts, p1: p.p1, p2: p.p2, p3: p.p3, awards: p.awards || [] })); }
   savePref(ROOM_KEY, JSON.stringify(data));
 }
 function forgetRoom() { try { localStorage.removeItem(ROOM_KEY); } catch (e) {} }
@@ -482,8 +533,8 @@ function savedRoom() {
 function sendTo(c, msg) { try { if (c && c.open) c.send(msg); } catch (e) {} }
 function broadcast(msg) { for (const c of guestConns.values()) sendTo(c, msg); }
 function rosterMsg() {
-  return { t: 'room', phase, level, completed, players: Object.values(players).map(p => ({ id: p.id, name: p.name, color: p.color, char: p.char,
-           pts: p.pts, p1: p.p1, p2: p.p2, p3: p.p3, inRace: p.inRace, online: p.online !== false })) };
+  return { t: 'room', phase, level, completed, family: familyMode, players: Object.values(players).map(p => ({ id: p.id, name: p.name, color: p.color, char: p.char,
+           pts: p.pts, p1: p.p1, p2: p.p2, p3: p.p3, awards: p.awards || [], inRace: p.inRace, online: p.online !== false })) };
 }
 function sendRoster() { broadcast(rosterMsg()); saveRoom(); renderRoomPanel(); }
 
@@ -520,6 +571,7 @@ function hostOnConnection(c) {
     if (m.t === 'st') {
       if (m.rid !== raceId || m.lv !== level || !p.inRace || (phase !== 'race' && phase !== 'count')) return;   // ignore updates left over from another race
       p.d = +m.d || 0; p.y = +m.y || GROUND; p.duck = !!m.duck;
+      if (m.s) p.stats = cleanStats(m.s);
       if (m.fin && !p.fin) { p.fin = true; p.ft = +m.ft || 0; if (!firstFinishAt) firstFinishAt = now; }
     }
   });
@@ -542,6 +594,7 @@ function onHostData(m) {
     const old = players; players = {};
     for (const q of m.players || []) players[q.id] = Object.assign({ d: 0, y: GROUND, duck: false, fin: false, ft: 0 }, old[q.id] || {}, q);
     completed = m.completed || 0;
+    familyMode = !!m.family;
     if (m.phase === 'lobby' && phase !== 'lobby') { phase = 'lobby'; level = m.level || 1; resetRun(); setState('RLOBBY'); }
     if (changed) renderRoomPanel();
   } else if (m.t === 'st') {
@@ -550,7 +603,8 @@ function onHostData(m) {
     beginCountdown(m.level, m.seed, m.ids || []);
   } else if (m.t === 'res') {
     lastResults = m; phase = m.final ? 'final' : 'results'; level = m.level || level;
-    for (const row of m.rows) if (players[row.id]) Object.assign(players[row.id], { pts: row.total, p1: row.p1, p2: row.p2, p3: row.p3 });
+    familyMode = !!m.family;
+    for (const row of m.rows) if (players[row.id]) Object.assign(players[row.id], { pts: row.total, p1: row.p1, p2: row.p2, p3: row.p3, awards: row.awards || [] });
     setState(m.final ? 'RFINAL' : 'RRES'); renderRoomPanel();
   } else if (m.t === 'closed') {
     roomClosed = true; forgetRoom(); setState('RCLOSED');
@@ -595,7 +649,7 @@ setInterval(() => {
 function hostStartLevel(lv) {
   const seed = Math.floor(Math.random() * 1e9);
   const ids = Object.values(players).filter(p => p.online !== false).map(p => p.id);
-  for (const p of Object.values(players)) Object.assign(p, { inRace: ids.includes(p.id), d: 0, fin: false, ft: 0 });
+  for (const p of Object.values(players)) Object.assign(p, { inRace: ids.includes(p.id), d: 0, fin: false, ft: 0, stats: newStats() });
   firstFinishAt = 0;
   broadcast({ t: 'start', level: lv, seed, ids });
   beginCountdown(lv, seed, ids);
@@ -604,21 +658,30 @@ function hostStartLevel(lv) {
 function hostCheckLevelEnd() {
   const racers = Object.values(players).filter(p => p.inRace);
   const allDone = racers.length > 0 && racers.every(p => p.fin);
-  if (!allDone && !(firstFinishAt && now - firstFinishAt > FINISH_WAIT_MS) && racers.length > 0) return;
+  if (!allDone && !(firstFinishAt && now - firstFinishAt > (familyMode ? FAMILY_WAIT_MS : FINISH_WAIT_MS)) && racers.length > 0) return;
   const finished = racers.filter(p => p.fin).sort((a, b) => a.ft - b.ft);
   const notFinished = racers.filter(p => !p.fin).sort((a, b) => b.d - a.d);
   const rows = [];
-  finished.forEach((p, i) => {
-    const got = POINTS[i] || 0; p.pts += got;
-    if (i === 0) p.p1++; else if (i === 1) p.p2++; else if (i === 2) p.p3++;
-    rows.push({ id: p.id, place: i + 1, ft: p.ft, got });
-  });
-  notFinished.forEach(p => rows.push({ id: p.id, place: 0, ft: 0, got: 0 }));
+  if (familyMode) {
+    // family game: everybody wins one prize and the same points
+    const me0 = players[myId]; if (me0 && me0.inRace) me0.stats = cleanStats(myStats);
+    const got = assignAwards(racers.map(p => ({ id: p.id, fin: p.fin, ft: p.ft, d: p.d, s: p.stats || newStats(), had: p.awards || [] })));
+    finished.forEach((p, i) => rows.push({ id: p.id, place: i + 1, ft: p.ft, got: FAMILY_POINTS, award: got[p.id] }));
+    notFinished.forEach(p => rows.push({ id: p.id, place: 0, ft: 0, got: FAMILY_POINTS, award: got[p.id] }));
+    for (const r of rows) { const p = players[r.id]; p.pts += FAMILY_POINTS; p.awards = (p.awards || []).concat(r.award); }
+  } else {
+    finished.forEach((p, i) => {
+      const got = POINTS[i] || 0; p.pts += got;
+      if (i === 0) p.p1++; else if (i === 1) p.p2++; else if (i === 2) p.p3++;
+      rows.push({ id: p.id, place: i + 1, ft: p.ft, got });
+    });
+    notFinished.forEach(p => rows.push({ id: p.id, place: 0, ft: 0, got: 0 }));
+  }
   for (const p of Object.values(players)) p.inRace = false;
   completed = level;
   const final = level >= MAX_LEVEL;
-  const totals = Object.values(players).map(p => ({ id: p.id, total: p.pts, p1: p.p1, p2: p.p2, p3: p.p3 }));
-  const msg = { t: 'res', level, final, rows: totals.map(t => Object.assign(t, rows.find(r => r.id === t.id) || { place: -1, got: 0, ft: 0 })) };
+  const totals = Object.values(players).map(p => ({ id: p.id, total: p.pts, p1: p.p1, p2: p.p2, p3: p.p3, awards: p.awards || [] }));
+  const msg = { t: 'res', level, final, family: familyMode, rows: totals.map(t => Object.assign(t, rows.find(r => r.id === t.id) || { place: -1, got: 0, ft: 0 })) };
   lastResults = msg; phase = final ? 'final' : 'results';
   broadcast(msg); sendRoster();
   setState(final ? 'RFINAL' : 'RRES');
@@ -626,7 +689,7 @@ function hostCheckLevelEnd() {
 
 // ---- both ----
 function beginCountdown(lv, seed, ids) {
-  raceId = seed; level = lv; resetRun(); course = makeCourse(seed, lv);
+  raceId = seed; level = lv; resetRun(); course = makeCourse(seed, lv); myStats = newStats();
   d = 0; stunUntil = 0; myFin = false; myFt = 0; obs = course.obs;
   for (const id of ids) if (players[id]) Object.assign(players[id], { inRace: true, d: 0, fin: false, ft: 0 });
   if (!ids.includes(myId)) { phase = 'wait'; setState('RLOBBY'); renderRoomPanel(); return; }   // joined mid-level: wait for the next one
@@ -672,12 +735,27 @@ function raceTick(edge) {
     case 'RRACE': case 'RDONE': {
       const running = !myFin && now >= stunUntil;
       if (!myFin) {
+        const wasOnGround = onGround;
         physics();
         if (running) d += speed;
+        const st = myStats || (myStats = newStats());
+        if (wasOnGround && !onGround) st.jumps++;
+        if (!onGround) { st.air += 28; st.maxH = Math.max(st.maxH, Math.round(GROUND - dinoY)); }
+        if (ducking) st.duck += 28;
         for (const o of obs) {
           o.x = DX + (o.p - d);
-          if (!o.passed && o.x + obWidth(o.type) < DX) o.passed = true;
-          if (now > invulnUntil && !o.passed && hitTest(o)) { o.passed = true; stunUntil = now + STUN_MS; invulnUntil = now + STUN_MS + 600; }
+          if (!o.passed) {                                   // how close did I get? (for "על הקשקש")
+            const [x0, y0, x1, y1] = obBox(o);
+            if (DX + 30 > x0 && DX + 8 < x1) {
+              const gap = o.type === BIRD_HIGH ? (dinoY - (ducking ? 16 : 32)) - y1 : y0 - dinoY;
+              o.minGap = Math.min(o.minGap === undefined ? 99 : o.minGap, gap);
+            }
+          }
+          if (!o.passed && o.x + obWidth(o.type) < DX) {
+            o.passed = true; st.streak++; st.best = Math.max(st.best, st.streak);
+            if (o.minGap !== undefined && o.minGap < 8) st.shave++;
+          }
+          if (now > invulnUntil && !o.passed && hitTest(o)) { o.passed = true; st.hits++; st.streak = 0; stunUntil = now + STUN_MS; invulnUntil = now + STUN_MS + 600; }
         }
         if (d >= course.L) { d = course.L; myFin = true; myFt = now - raceStart; dinoY = GROUND; onGround = true; if (m) { m.fin = true; m.ft = myFt; } if (isHost && !firstFinishAt) firstFinishAt = now; setState('RDONE'); }
       } else for (const o of obs) o.x = DX + (o.p - d);
@@ -703,9 +781,13 @@ function raceTick(edge) {
       rect(mx0, my, mx1 - mx0, 2, T.text); rect(mx1, my - 6, 2, 14, T.text);
       for (const p of Object.values(players)) if (p.inRace && p.id !== myId) circ(mx0 + (mx1 - mx0) * Math.min((p.fin ? course.L : p.d) / course.L, 1), my + 1, 4, p.color);
       circ(mx0 + (mx1 - mx0) * Math.min(d / course.L, 1), my + 1, 6, myColor);
-      const lp = livePlace();
-      if (myFin) { text('FINISHED!', 80, 2, C.gold); text(ord(lp.place) + ' PLACE', 102, 2, T.text); text('WAITING FOR OTHERS', 128, 1, T.text); }
-      else text(ord(lp.place) + ' / ' + lp.of, 190, 2, T.text);
+      if (familyMode) {
+        if (myFin) { text('FINISHED!', 80, 2, C.gold); text('WAITING FOR EVERYONE', 110, 1, T.text); }
+      } else {
+        const lp = livePlace();
+        if (myFin) { text('FINISHED!', 80, 2, C.gold); text(ord(lp.place) + ' PLACE', 102, 2, T.text); text('WAITING FOR OTHERS', 128, 1, T.text); }
+        else text(ord(lp.place) + ' / ' + lp.of, 190, 2, T.text);
+      }
       drawRing(d / course.L);
       if (isHost) hostCheckLevelEnd();
       break;
@@ -714,6 +796,18 @@ function raceTick(edge) {
       dinoY = GROUND; vy = 0; onGround = true;
       drawWorld(0); drawDino(false, myColor, false);
       text('LEVEL ' + level, 26, 2, T.text);
+      if (lastResults && lastResults.family) {
+        const mine = lastResults.rows.find(r => r.id === myId);
+        if (mine && mine.award) {
+          const a = awardById(mine.award);
+          htext('🥇 ניצחת!', 50, 20, C.gold);
+          htext(a.emoji, 76, 34, '#000');
+          htext(a.name, 116, 18, T.text);
+        } else htext('הסיבוב הבא בדרך...', 70, 16, T.text);
+        htext('כל אחד זכה במשהו!', 180, 13, T.text);
+        if (isHost && now - stateTime > 7000) hostStartLevel(level + 1);
+        break;
+      }
       const rows = (lastResults ? lastResults.rows : []).filter(r => r.place > 0).sort((a, b) => a.place - b.place).slice(0, 3);
       const medal = [C.gold, C.silver, C.bronze];
       rows.forEach((r, i) => {
@@ -729,6 +823,14 @@ function raceTick(edge) {
     case 'RFINAL': {
       dinoY = GROUND; vy = 0; onGround = true;
       drawWorld(speed * 0.5); drawDino(false, myColor);
+      if (familyMode) {
+        htext('🎉 כולם ניצחו! 🎉', 34, 20, C.gold);
+        const mine = me();
+        if (mine) { htext('אספת ' + (mine.awards || []).length + ' פרסים', 66, 16, T.text); htext(awardSummary(mine.awards).slice(0, 24), 92, 16, '#000'); }
+        if (isHost) { if (blink) text('JUMP = NEW GAME', 130, 1, T.text); if (edge && now - stateTime > 1500) hostNewGame(); }
+        else htext('הטבלה למטה', 130, 13, T.text);
+        break;
+      }
       const top = standings()[0];
       text('WINNER', 30, 3, C.gold);
       if (top) { text((top.name || 'PLAYER').toUpperCase(), 62, 2, top.color); text(top.pts + ' POINTS', 86, 1, T.text); }
@@ -769,12 +871,12 @@ function raceTick(edge) {
       for (const [id, c] of guestConns) { const q = players[id]; if (q && now - q.seen > 10000) { try { c.close(); } catch (e) {} guestConns.delete(id); q.online = false; q.inRace = false; sendRoster(); } }
       if (now - roomSendT > 3000) { roomSendT = now; broadcast(rosterMsg()); }
     } else if (hostConn && hostConn.open) {
-      sendTo(hostConn, { t: 'st', rid: raceId, lv: level, d: Math.round(d), y: Math.round(dinoY), duck: ducking, fin: myFin, ft: myFt });
+      sendTo(hostConn, { t: 'st', rid: raceId, s: myStats, lv: level, d: Math.round(d), y: Math.round(dinoY), duck: ducking, fin: myFin, ft: myFt });
     }
   }
 }
 function hostNewGame() {
-  for (const p of Object.values(players)) Object.assign(p, { pts: 0, p1: 0, p2: 0, p3: 0, inRace: false, fin: false, d: 0 });
+  for (const p of Object.values(players)) Object.assign(p, { pts: 0, p1: 0, p2: 0, p3: 0, awards: [], inRace: false, fin: false, d: 0 });
   completed = 0; level = 1; resetRun(); phase = 'lobby'; lastResults = null; setState('RLOBBY'); sendRoster();
 }
 
@@ -948,9 +1050,11 @@ function enterRoom(restore) {
       for (const q of restore.players) {
         const id = cleanId(q.id);
         if (id) players[id] = newPlayer(id, { name: cleanName(q.name) || 'PLAYER', color: COLORS.includes(q.color) ? q.color : COLORS[1],
-          char: CHARS.some(c => c.id === q.char) ? q.char : 'dino', pts: +q.pts || 0, p1: +q.p1 || 0, p2: +q.p2 || 0, p3: +q.p3 || 0, online: false });
+          char: CHARS.some(c => c.id === q.char) ? q.char : 'dino', pts: +q.pts || 0, p1: +q.p1 || 0, p2: +q.p2 || 0, p3: +q.p3 || 0,
+          awards: Array.isArray(q.awards) ? q.awards.filter(a => typeof a === 'string').slice(0, 50) : [], online: false });
       }
       completed = Math.max(0, Math.min(MAX_LEVEL, +restore.completed || 0));
+      familyMode = !!restore.family;
     }
     const mine = players[myId] || newPlayer(myId);
     const colorFree = !Object.values(players).some(q => q.id !== myId && q.color === selColor);
@@ -971,8 +1075,15 @@ function renderRoomPanel() {
       [el('div', { className: 'note', textContent: isHost
         ? 'שלחו את הקוד לחברים. כשכולם בפנים — לחץ קפיצה כדי להתחיל. החדר נשאר פתוח עד שתלחץ "✕ סגור חדר".'
         : 'מחכים שהמארח יתחיל.' })]));
+    if (isHost) {
+      const t = el('button', { className: 'big ' + (familyMode ? 'duo' : 'ghost'),
+        textContent: familyMode ? '👨‍👩‍👧 משחק משפחה: פעיל ✓' : '👨‍👩‍👧 משחק משפחה: כבוי' });
+      t.onclick = () => { familyMode = !familyMode; sendRoster(); };
+      panel.append(t, el('div', { className: 'note', textContent: 'במשחק משפחה כל אחד זוכה בכל שלב בפרס אחר (הכי מהיר, הכי זהיר, מלך הקפיצות...), כולם מקבלים אותן נקודות — ואין ריבים 🙂' }));
+    } else if (familyMode) panel.append(el('div', { className: 'card note', textContent: '👨‍👩‍👧 משחק משפחה: בכל שלב כל אחד זוכה בפרס אחר!' }));
     panel.append(pickerCard());
   }
+  if (familyMode) { renderFamilyTable(); return; }
   const showResults = lastResults && (phase === 'results' || phase === 'final');
   const card = el('div', { className: 'card' });
   card.append(el('h3', { textContent: phase === 'final' ? '🏆 טבלה סופית' : showResults ? `אחרי שלב ${lastResults.level}` : `שחקנים (${onlineCount()}/${MAX_PLAYERS})` }));
@@ -986,6 +1097,24 @@ function renderRoomPanel() {
     tbl.append(el('tr', { className: p.id === myId ? 'me' : '' }, [el('td', { className: 'n', textContent: i + 1 }), nameCell,
       el('td', { className: 'n', textContent: lvl }), el('td', { className: 'n', textContent: p.pts }), el('td', { className: 'n', textContent: `${p.p1}·${p.p2}·${p.p3}` })]));
   });
+  card.append(tbl);
+  panel.append(card);
+}
+
+function renderFamilyTable() {
+  const showResults = lastResults && lastResults.family && (phase === 'results' || phase === 'final');
+  const card = el('div', { className: 'card' });
+  card.append(el('h3', { textContent: phase === 'final' ? '🎉 כולם ניצחו — הפרסים של כולם' : showResults ? `🏆 הפרסים של שלב ${lastResults.level}` : `שחקנים (${onlineCount()}/${MAX_PLAYERS}) · משחק משפחה` }));
+  const tbl = el('table');
+  tbl.append(el('tr', {}, [el('th', { textContent: 'שחקן' }), el('th', { textContent: showResults && phase !== 'final' ? 'הפרס בשלב' : '' }), el('th', { textContent: 'כל הפרסים' })]));
+  const list = Object.values(players).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  for (const p of list) {
+    const row = showResults ? lastResults.rows.find(r => r.id === p.id) : null;
+    const a = row && row.award ? awardById(row.award) : null;
+    const nameCell = el('td', {}, [el('span', { className: 'dot', style: `background:${p.color}` }), document.createTextNode(charEmoji(p.char) + ' ' + (p.name || 'PLAYER') + (p.id === myId ? ' (אתה)' : '') + (p.online === false ? ' 💤' : ''))]);
+    tbl.append(el('tr', { className: p.id === myId ? 'me' : '' }, [nameCell,
+      el('td', { textContent: a && phase !== 'final' ? a.emoji + ' ' + a.name : '' }), el('td', { textContent: awardSummary(p.awards) })]));
+  }
   card.append(tbl);
   panel.append(card);
 }
