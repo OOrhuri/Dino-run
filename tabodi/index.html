@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
 <title>Tabodi Run</title>
-<script>window.GAME_THEME = { id: 'tabodi', title1: 'TABODI', title2: 'RUN', prefKey: 'tabodi', chars: ['tabodi','moose','owl','fox','bee','octo','yeti','ladybug'] };</script>
+<script>window.GAME_THEME = { id: 'tabodi', title1: 'TABODI', title2: 'RUN', prefKey: 'tabodi', chars: ['tabodi','redpanda','polar','moose','owl','fox','bee','octo','yeti','ladybug'] };</script>
 <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
 <style>
   html, body { margin: 0; height: 100%; background: #111; color: #eee; font-family: system-ui, sans-serif;
@@ -96,7 +96,8 @@ const ALL_CHARS = [ { id: 'dino', emoji: '🦖', name: 'דינו' }, { id: 'robo
                 // Tabodi Run characters (original)
                 { id: 'tabodi', emoji: '🟢', name: 'טבודי' }, { id: 'moose', emoji: '🫎', name: 'מוזי' }, { id: 'owl', emoji: '🦉', name: 'ינשופי' },
                 { id: 'fox', emoji: '🦊', name: 'שועלי' }, { id: 'bee', emoji: '🐝', name: 'דבורית' }, { id: 'octo', emoji: '🐙', name: 'תמנוני' },
-                { id: 'yeti', emoji: '🧊', name: 'יטי' }, { id: 'ladybug', emoji: '🐞', name: 'פרת משה' } ];
+                { id: 'yeti', emoji: '🧊', name: 'יטי' }, { id: 'ladybug', emoji: '🐞', name: 'פרת משה' },
+                { id: 'redpanda', emoji: '🧣', name: 'פנדי' }, { id: 'polar', emoji: '🕶️', name: 'קוטבי' } ];
 const CHARS = THEME.chars ? THEME.chars.map(id => ALL_CHARS.find(c => c.id === id)).filter(Boolean) : ALL_CHARS.slice(0, 8);
 const charEmoji = id => (CHARS.find(c => c.id === id) || CHARS[0]).emoji;
 function loadPref(k, ok, def) { try { const v = localStorage.getItem(k); return ok(v) ? v : def; } catch (e) { return def; } }
@@ -487,7 +488,44 @@ function ladybugShape(x, b, duck, col, legA) {
     rect(x+8, b-3, 3, 3, dark); rect(x+20, b-3, 3, 3, dark);
   }
 }
-const SHAPES = { robot: robotShape, penguin: penguinShape, cat: catShape, frog: frogShape, princess: princessShape, unicorn: unicornShape, ninja: ninjaShape,
+function redpandaShape(x, b, duck, col, legA) {
+  // chubby red panda with a scarf (col = scarf colour; fur stays red-brown)
+  const fur = '#c8622a', cream = '#f6e6c8', dark = '#3a241a';
+  if (!duck) {
+    rr(x, b-20, 8, 20, 4, fur); for (let i = 0; i < 3; i++) rect(x, b-17 + i * 6, 8, 2, dark);   // ringed tail
+    rect(x+10, b-7, 5, legA ? 7 : 5, dark); rect(x+21, b-7, 5, legA ? 5 : 7, dark);
+    rr(x+6, b-27, 24, 21, 9, fur); rr(x+11, b-20, 14, 12, 5, cream);
+    rr(x+9, b-39, 20, 15, 7, fur); rr(x+12, b-33, 14, 8, 4, cream);
+    tri(x+9, b-37, x+10, b-44, x+16, b-38, fur); tri(x+29, b-37, x+28, b-44, x+22, b-38, fur);
+    rect(x+14, b-33, 2.5, 2.5, dark); rect(x+22, b-33, 2.5, 2.5, dark); circ(x+19, b-28, 2, dark);
+    rr(x+9, b-26, 20, 5, 2, col); rect(x+24, b-24, 5, 9, col);                                   // scarf
+  } else {
+    rr(x, b-10, 7, 6, 3, fur); rect(x, b-8, 7, 2, dark);
+    rr(x+4, b-15, 26, 12, 6, fur); rr(x+22, b-19, 14, 11, 5, fur); rr(x+26, b-15, 9, 6, 3, cream);
+    tri(x+23, b-18, x+24, b-23, x+28, b-18, fur); tri(x+35, b-18, x+34, b-23, x+30, b-18, fur);
+    rect(x+28, b-14, 2, 2, dark); rect(x+33, b-14, 2, 2, dark);
+    rr(x+20, b-12, 6, 4, 2, col);
+    rect(x+8, b-3, 5, 3, dark); rect(x+19, b-3, 5, 3, dark);
+  }
+}
+function polarShape(x, b, duck, col, legA) {
+  // round polar bear with sunglasses (col = sunglasses frame colour)
+  const fur = '#f2f6fb', shade = '#d6e0ea', dark = '#222';
+  if (!duck) {
+    rect(x+9, b-7, 6, legA ? 7 : 5, shade); rect(x+21, b-7, 6, legA ? 5 : 7, shade);
+    rr(x+5, b-28, 26, 23, 10, fur); rr(x+11, b-20, 14, 11, 5, shade);
+    rr(x+8, b-40, 22, 15, 7, fur); circ(x+10, b-39, 3.5, fur); circ(x+28, b-39, 3.5, fur);
+    rr(x+10, b-36, 9, 6, 2, col); rr(x+20, b-36, 9, 6, 2, col); rect(x+19, b-34, 1, 2, col);        // sunglasses
+    rect(x+12, b-34, 2, 2, 'rgba(255,255,255,.6)'); rect(x+22, b-34, 2, 2, 'rgba(255,255,255,.6)');
+    rr(x+16, b-29, 7, 4, 2, dark);
+  } else {
+    rr(x+3, b-16, 28, 13, 7, fur); rr(x+22, b-19, 14, 12, 5, fur); circ(x+24, b-19, 3, fur); circ(x+34, b-19, 3, fur);
+    rr(x+24, b-16, 6, 4, 1, col); rr(x+31, b-16, 6, 4, 1, col);
+    rr(x+33, b-10, 4, 3, 2, dark);
+    rect(x+8, b-3, 6, 3, shade); rect(x+20, b-3, 6, 3, shade);
+  }
+}
+const SHAPES = { redpanda: redpandaShape, polar: polarShape, robot: robotShape, penguin: penguinShape, cat: catShape, frog: frogShape, princess: princessShape, unicorn: unicornShape, ninja: ninjaShape,
                  tabodi: tabodiShape, moose: mooseShape, owl: owlShape, fox: foxShape, bee: beeShape, octo: octoShape, yeti: yetiShape, ladybug: ladybugShape };
 function charShape(kind, x, b, duck, col, legA) {
   if (SHAPES[kind]) { SHAPES[kind](x, b, duck, col, legA); return; }
