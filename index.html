@@ -125,6 +125,7 @@ const specks = Array.from({length:24}, () => [Math.random()*240, GROUND + 4 + Ma
 
 function setState(s) { state = s; stateTime = now; }
 function resetRun() {
+  if (typeof myFin !== 'undefined') { myFin = false; myFt = 0; d = 0; }
   speed = levelSpeed(level); T = THEMES[(level - 1) % 5];
   cleared = 0; spawned = 0; obs = []; dinoY = GROUND; vy = 0; onGround = true; ducking = false; nextGap = 0;
 }
@@ -425,16 +426,31 @@ function soloTick(edge) {
 // The room creator is the HOST: everyone connects to the host, the host decides
 // when levels start, collects finish times, gives points and sends the tables.
 // Every player gets the same course (same random seed), so the race is fair.
+//
+// The room stays open until the host closes it ("✕ סגור חדר"):
+//  - every player has a stable id, so after a reload or a dropped connection they
+//    come back to the same place with their points;
+//  - guests reconnect by themselves;
+//  - the host's phone remembers the room (code, players, points) and reopens it
+//    with the same code after a reload.
 const PEER_PREFIX = 'dinorun-race-v1-';
+const ROOM_KEY = 'dino-room';
 let peer = null, isHost = false, hostConn = null;
-const guestConns = new Map();          // host only: peerId -> connection
+const guestConns = new Map();          // host only: player id -> connection
 let myId = '', myName = '', code = '';
-let players = {};                      // id -> {id, name, color, pts, p1, p2, p3, inRace, d, y, duck, fin, ft}
-let phase = 'lobby';                   // lobby | count | race | results | final
+let players = {};                      // id -> {id, name, color, char, pts, p1, p2, p3, inRace, online, d, y, duck, fin, ft, seen}
+let phase = 'lobby';                   // lobby | wait | count | race | results | final
+let completed = 0;                     // host: levels finished in this game
 let course = null, d = 0, stunUntil = 0, raceStart = 0, myFin = false, myFt = 0, firstFinishAt = 0;
-let lastResults = null, sendT = 0, roomSendT = 0, lastHostMsg = 0, lastRoomSig = '';
+let lastResults = null, sendT = 0, roomSendT = 0, lastHostMsg = 0, lastRoomSig = '', lastAttempt = 0;
+let leaving = false, roomClosed = false;
+let raceId = 0;                        // id of the current race; progress messages from any other race are ignored
 
 function cleanName(s) { return String(s || '').replace(/[^\p{L}\p{N} _-]/gu, '').trim().slice(0, 12); }
+const cleanId = s => String(s || '').replace(/[^a-z0-9]/gi, '').slice(0, 16);
+const cleanCode = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const validCode = c => /^[a-z0-9]{3,10}$/.test(c);
+function freshId() { return Math.random().toString(36).slice(2, 12); }
 function mulberry32(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
 function makeCourse(seed, lv) {
   const r = mulberry32(seed + lv * 7919), sp = levelSpeed(lv), L = raceLen(lv), list = [];
@@ -443,38 +459,89 @@ function makeCourse(seed, lv) {
   return { L, obs: list };
 }
 const me = () => players[myId];
+function newPlayer(id, extra) {
+  return Object.assign({ id, name: 'PLAYER', color: COLORS[1], char: 'dino', pts: 0, p1: 0, p2: 0, p3: 0, inRace: false, online: true,
+                         d: 0, y: GROUND, duck: false, fin: false, ft: 0, seen: now }, extra || {});
+}
+const onlineCount = () => Object.values(players).filter(p => p.online !== false).length;
+
+// ---- room memory (so a reload doesn't lose the room) ----
+function saveRoom() {
+  if (!code || leaving) return;
+  const data = { code, host: isHost, me: myId, name: myName, ts: Date.now() };
+  if (isHost) { data.completed = completed; data.players = Object.values(players).map(p => ({ id: p.id, name: p.name, color: p.color, char: p.char, pts: p.pts, p1: p.p1, p2: p.p2, p3: p.p3 })); }
+  savePref(ROOM_KEY, JSON.stringify(data));
+}
+function forgetRoom() { try { localStorage.removeItem(ROOM_KEY); } catch (e) {} }
+function savedRoom() {
+  try { const r = JSON.parse(localStorage.getItem(ROOM_KEY) || 'null'); return r && validCode(r.code) && Date.now() - r.ts < 12 * 3600e3 ? r : null; }
+  catch (e) { return null; }
+}
 
 // ---- sending ----
 function sendTo(c, msg) { try { if (c && c.open) c.send(msg); } catch (e) {} }
 function broadcast(msg) { for (const c of guestConns.values()) sendTo(c, msg); }
 function rosterMsg() {
-  return { t: 'room', phase, level, players: Object.values(players).map(p => ({ id: p.id, name: p.name, color: p.color, char: p.char, pts: p.pts, p1: p.p1, p2: p.p2, p3: p.p3, inRace: p.inRace })) };
+  return { t: 'room', phase, level, completed, players: Object.values(players).map(p => ({ id: p.id, name: p.name, color: p.color, char: p.char,
+           pts: p.pts, p1: p.p1, p2: p.p2, p3: p.p3, inRace: p.inRace, online: p.online !== false })) };
 }
-function sendRoster() { broadcast(rosterMsg()); renderRoomPanel(); }
+function sendRoster() { broadcast(rosterMsg()); saveRoom(); renderRoomPanel(); }
 
-// ---- receiving ----
-function onGuestData(id, m) {                   // host side
-  if (!m || typeof m !== 'object') return;
-  const p = players[id];
-  if (m.t === 'hello' && p) {
-    p.name = cleanName(m.name) || 'PLAYER';
-    if (CHARS.some(c => c.id === m.char)) p.char = m.char;
-    if (COLORS.includes(m.color) && !Object.values(players).some(q => q.id !== id && q.color === m.color)) p.color = m.color;
-    sendRoster();
-  }
-  else if (m.t === 'st' && p) {
-    if (m.lv !== level || !p.inRace || (phase !== 'race' && phase !== 'count')) return;   // ignore updates left over from another level
-    p.d = +m.d || 0; p.y = +m.y || GROUND; p.duck = !!m.duck;
-    if (m.fin && !p.fin && p.inRace) { p.fin = true; p.ft = +m.ft || 0; if (!firstFinishAt) firstFinishAt = now; }
-  }
+// ---- host: guests connecting ----
+function hostOnConnection(c) {
+  let id = null;
+  c.on('data', m => {
+    if (!m || typeof m !== 'object') return;
+    if (m.t === 'hello') {
+      const cid = cleanId(m.cid) || cleanId(c.peer);
+      if (id && id !== cid) return;
+      if (!players[cid]) {
+        if (onlineCount() >= MAX_PLAYERS) { sendTo(c, { t: 'full' }); setTimeout(() => { try { c.close(); } catch (e) {} }, 500); return; }
+        const used = new Set(Object.values(players).map(p => p.color));
+        players[cid] = newPlayer(cid, { color: COLORS.find(x => !used.has(x)) || COLORS[1] });
+      }
+      const old = guestConns.get(cid);
+      id = cid; guestConns.set(cid, c);
+      if (old && old !== c) { try { old.close(); } catch (e) {} }
+      const p = players[cid];
+      p.online = true; p.seen = now;
+      p.name = cleanName(m.name) || p.name || 'PLAYER';
+      if (CHARS.some(x => x.id === m.char)) p.char = m.char;
+      if (COLORS.includes(m.color) && !Object.values(players).some(q => q.id !== cid && q.color === m.color)) p.color = m.color;
+      sendRoster();
+      if (lastResults && (phase === 'results' || phase === 'final')) sendTo(c, lastResults);
+      return;
+    }
+    if (!id || !players[id] || guestConns.get(id) !== c) return;
+    const p = players[id]; p.seen = now;
+    if (m.t === 'bye') {                                   // the guest left on purpose
+      guestConns.delete(id); delete players[id]; try { c.close(); } catch (e) {} sendRoster(); return;
+    }
+    if (m.t === 'st') {
+      if (m.rid !== raceId || m.lv !== level || !p.inRace || (phase !== 'race' && phase !== 'count')) return;   // ignore updates left over from another race
+      p.d = +m.d || 0; p.y = +m.y || GROUND; p.duck = !!m.duck;
+      if (m.fin && !p.fin) { p.fin = true; p.ft = +m.ft || 0; if (!firstFinishAt) firstFinishAt = now; }
+    }
+  });
+  c.on('close', () => {
+    if (id && guestConns.get(id) === c) {                // dropped: keep their place and points
+      guestConns.delete(id);
+      const p = players[id]; if (p) { p.online = false; p.inRace = false; }
+      sendRoster();
+    }
+  });
+  c.on('error', () => {});
 }
-function onHostData(m) {                        // guest side
+
+// ---- guest: talking to the host ----
+function onHostData(m) {
   if (!m || typeof m !== 'object') return;
   if (m.t === 'room') {
     const sig = JSON.stringify([m.phase, m.level, m.players]);
     const changed = sig !== lastRoomSig; lastRoomSig = sig;
     const old = players; players = {};
     for (const q of m.players || []) players[q.id] = Object.assign({ d: 0, y: GROUND, duck: false, fin: false, ft: 0 }, old[q.id] || {}, q);
+    completed = m.completed || 0;
     if (m.phase === 'lobby' && phase !== 'lobby') { phase = 'lobby'; level = m.level || 1; resetRun(); setState('RLOBBY'); }
     if (changed) renderRoomPanel();
   } else if (m.t === 'st') {
@@ -482,32 +549,53 @@ function onHostData(m) {                        // guest side
   } else if (m.t === 'start') {
     beginCountdown(m.level, m.seed, m.ids || []);
   } else if (m.t === 'res') {
-    lastResults = m; phase = m.final ? 'final' : 'results';
+    lastResults = m; phase = m.final ? 'final' : 'results'; level = m.level || level;
     for (const row of m.rows) if (players[row.id]) Object.assign(players[row.id], { pts: row.total, p1: row.p1, p2: row.p2, p3: row.p3 });
     setState(m.final ? 'RFINAL' : 'RRES'); renderRoomPanel();
+  } else if (m.t === 'closed') {
+    roomClosed = true; forgetRoom(); setState('RCLOSED');
+    const pe = peer; peer = null; hostConn = null; setTimeout(() => { try { pe && pe.destroy(); } catch (e) {} }, 300);
+    updateBack();
   } else if (m.t === 'full') {
     showSetupError('החדר מלא (עד ' + MAX_PLAYERS + ' שחקנים).');
   }
 }
-
-// ---- host logic ----
-function hostAddGuest(c) {
-  if (Object.keys(players).length >= MAX_PLAYERS) { c.on('open', () => { sendTo(c, { t: 'full' }); setTimeout(() => c.close(), 500); }); return; }
-  const used = new Set(Object.values(players).map(p => p.color));
-  const color = COLORS.find(x => !used.has(x)) || COLORS[1];
+function guestOpen() {
+  if (!peer || peer.destroyed || leaving || roomClosed) return;
+  if (peer.disconnected) { try { peer.reconnect(); } catch (e) {} }
+  if (hostConn) { const o = hostConn; hostConn = null; try { o.close(); } catch (e) {} }
+  lastAttempt = performance.now();
+  let c;
+  try { c = peer.connect(PEER_PREFIX + code, { reliable: true }); } catch (e) { return; }
+  hostConn = c;
   c.on('open', () => {
-    guestConns.set(c.peer, c);
-    players[c.peer] = { id: c.peer, name: 'PLAYER', color, char: 'dino', pts: 0, p1: 0, p2: 0, p3: 0, inRace: false, d: 0, y: GROUND, duck: false, fin: false, ft: 0 };
-    sendRoster();
+    if (hostConn !== c) return;
+    lastHostMsg = performance.now();
+    sendTo(c, { t: 'hello', cid: myId, name: myName, char: selChar, color: selColor });
+    if (state === 'RRECONN') { phase = 'wait'; lastRoomSig = ''; setState('RLOBBY'); renderRoomPanel(); }
   });
-  c.on('data', m => onGuestData(c.peer, m));
-  c.on('close', () => { guestConns.delete(c.peer); delete players[c.peer]; sendRoster(); });
+  c.on('data', m => { if (hostConn !== c) return; lastHostMsg = performance.now(); onHostData(m); });
+  c.on('close', () => { if (hostConn === c) { hostConn = null; lostHost(); } });
   c.on('error', () => {});
 }
+function lostHost() {
+  if (leaving || roomClosed || isHost || mode !== 'race') return;
+  if (state !== 'IDLE' && state !== 'RCLOSED') setState('RRECONN');
+}
+// Watchdog: guests keep trying to get back to the host; the host keeps its code registered.
+setInterval(() => {
+  if (mode !== 'race' || !peer || leaving || roomClosed) return;
+  if (isHost) { if (peer.disconnected && !peer.destroyed) { try { peer.reconnect(); } catch (e) {} } return; }
+  const t = performance.now();
+  if (hostConn && hostConn.open && t - lastHostMsg > 8000) { const o = hostConn; hostConn = null; try { o.close(); } catch (e) {} lostHost(); }
+  if (!(hostConn && hostConn.open) && t - lastAttempt > 4000 && state !== 'IDLE') { lostHost(); guestOpen(); }
+}, 1000);
+
+// ---- host logic ----
 function hostStartLevel(lv) {
   const seed = Math.floor(Math.random() * 1e9);
-  const ids = Object.keys(players);
-  for (const p of Object.values(players)) Object.assign(p, { inRace: true, d: 0, fin: false, ft: 0 });
+  const ids = Object.values(players).filter(p => p.online !== false).map(p => p.id);
+  for (const p of Object.values(players)) Object.assign(p, { inRace: ids.includes(p.id), d: 0, fin: false, ft: 0 });
   firstFinishAt = 0;
   broadcast({ t: 'start', level: lv, seed, ids });
   beginCountdown(lv, seed, ids);
@@ -516,7 +604,7 @@ function hostStartLevel(lv) {
 function hostCheckLevelEnd() {
   const racers = Object.values(players).filter(p => p.inRace);
   const allDone = racers.length > 0 && racers.every(p => p.fin);
-  if (!allDone && !(firstFinishAt && now - firstFinishAt > FINISH_WAIT_MS)) return;
+  if (!allDone && !(firstFinishAt && now - firstFinishAt > FINISH_WAIT_MS) && racers.length > 0) return;
   const finished = racers.filter(p => p.fin).sort((a, b) => a.ft - b.ft);
   const notFinished = racers.filter(p => !p.fin).sort((a, b) => b.d - a.d);
   const rows = [];
@@ -527,6 +615,7 @@ function hostCheckLevelEnd() {
   });
   notFinished.forEach(p => rows.push({ id: p.id, place: 0, ft: 0, got: 0 }));
   for (const p of Object.values(players)) p.inRace = false;
+  completed = level;
   const final = level >= MAX_LEVEL;
   const totals = Object.values(players).map(p => ({ id: p.id, total: p.pts, p1: p.p1, p2: p.p2, p3: p.p3 }));
   const msg = { t: 'res', level, final, rows: totals.map(t => Object.assign(t, rows.find(r => r.id === t.id) || { place: -1, got: 0, ft: 0 })) };
@@ -537,9 +626,10 @@ function hostCheckLevelEnd() {
 
 // ---- both ----
 function beginCountdown(lv, seed, ids) {
-  level = lv; resetRun(); course = makeCourse(seed, lv);
+  raceId = seed; level = lv; resetRun(); course = makeCourse(seed, lv);
   d = 0; stunUntil = 0; myFin = false; myFt = 0; obs = course.obs;
   for (const id of ids) if (players[id]) Object.assign(players[id], { inRace: true, d: 0, fin: false, ft: 0 });
+  if (!ids.includes(myId)) { phase = 'wait'; setState('RLOBBY'); renderRoomPanel(); return; }   // joined mid-level: wait for the next one
   phase = 'count'; setState('RCOUNT'); renderRoomPanel();
 }
 function standings() {
@@ -561,13 +651,14 @@ function raceTick(edge) {
     case 'RLOBBY': {
       dinoY = GROUND; vy = 0; onGround = true;
       drawWorld(0); drawDino(false, myColor);
-      const n = Object.keys(players).length;
+      const n = onlineCount();
       text('PLAYERS: ' + n, 40, 2, T.text);
-      text('CODE ' + code.toUpperCase(), 70, 2, C.gold);
+      text('CODE ' + code.toUpperCase(), 70, code.length > 6 ? 1 : 2, C.gold);
       if (isHost) {
-        if (blink) text(n > 1 ? 'PRESS JUMP TO START' : 'WAITING FOR PLAYERS', 105, 1, T.text);
-        if (edge && n >= 1) hostStartLevel(1);
-      } else text('WAITING FOR HOST...', 105, 1, T.text);
+        const next = completed >= MAX_LEVEL ? 1 : completed + 1;
+        if (blink) text(completed > 0 && completed < MAX_LEVEL ? 'JUMP = CONTINUE LEVEL ' + next : n > 1 ? 'PRESS JUMP TO START' : 'WAITING FOR PLAYERS', 105, 1, T.text);
+        if (edge) { if (completed >= MAX_LEVEL) hostNewGame(); hostStartLevel(next); }
+      } else text(phase === 'lobby' ? 'WAITING FOR HOST...' : 'JOINING NEXT LEVEL...', 105, 1, T.text);
       break;
     }
     case 'RCOUNT': {
@@ -645,16 +736,24 @@ function raceTick(edge) {
       else text('SEE TABLE BELOW', 130, 1, T.text);
       break;
     }
-    case 'RLOST':
-      drawWorld(0); drawDino(true, myColor);
-      text('HOST', 70, 3, C.heart); text('LEFT', 100, 3, C.heart);
-      if (blink) text('PRESS JUMP TO REJOIN', 140, 1, T.text);
-      if (edge && now - stateTime > 800) { const c = code; disconnect(); renderRaceSetup(); $('iCode').value = c.toUpperCase(); $('nStatus').textContent = 'אפשר להצטרף שוב כשהמארח פותח את החדר.'; }
+    case 'RRECONN':
+      dinoY = GROUND; vy = 0; onGround = true;
+      drawWorld(0); drawDino(false, myColor, false);
+      text('RECONNECTING' + '.'.repeat(1 + Math.floor(now / 400) % 3), 60, 2, C.gold, CX - 64, 'left');
+      text('ROOM ' + code.toUpperCase(), 90, code.length > 6 ? 1 : 2, T.text);
+      text('YOUR POINTS ARE KEPT', 120, 1, T.text);
+      break;
+    case 'RCLOSED':
+      dinoY = GROUND; vy = 0; onGround = true;
+      drawWorld(0); drawDino(false, myColor, false);
+      text('ROOM', 60, 3, C.heart); text('CLOSED', 90, 3, C.heart);
+      if (blink) text('PRESS JUMP FOR MENU', 135, 1, T.text);
+      if (edge && now - stateTime > 800) { disconnect(); renderMenu(); }
       break;
   }
 
   // guests: say so when the host stopped answering (host switched app / locked the screen)
-  if (!isHost && state !== 'RLOST' && performance.now() - lastHostMsg > 4000) {
+  if (!isHost && state !== 'RRECONN' && state !== 'RCLOSED' && performance.now() - lastHostMsg > 4000) {
     rect(0, 196, 240, 30, 'rgba(0,0,0,.7)');
     text('HOST NOT RESPONDING', 200, 1, C.gold); text('HOST MUST KEEP THE GAME OPEN', 212, 1, '#fff');
   }
@@ -664,57 +763,60 @@ function raceTick(edge) {
     sendT = now;
     if (isHost) {
       const p = {};
-      for (const q of Object.values(players)) p[q.id] = { d: Math.round(q.d), y: Math.round(q.y), duck: q.duck, fin: q.fin, ft: q.ft };
+      for (const q of Object.values(players)) if (q.online !== false) p[q.id] = { d: Math.round(q.d), y: Math.round(q.y), duck: q.duck, fin: q.fin, ft: q.ft };
       if (guestConns.size) broadcast({ t: 'st', p });
+      // a guest that went silent (closed the app, lost signal): let it go, it can come back
+      for (const [id, c] of guestConns) { const q = players[id]; if (q && now - q.seen > 10000) { try { c.close(); } catch (e) {} guestConns.delete(id); q.online = false; q.inRace = false; sendRoster(); } }
       if (now - roomSendT > 3000) { roomSendT = now; broadcast(rosterMsg()); }
     } else if (hostConn && hostConn.open) {
-      sendTo(hostConn, { t: 'st', lv: level, d: Math.round(d), y: Math.round(dinoY), duck: ducking, fin: myFin, ft: myFt });
+      sendTo(hostConn, { t: 'st', rid: raceId, lv: level, d: Math.round(d), y: Math.round(dinoY), duck: ducking, fin: myFin, ft: myFt });
     }
   }
 }
 function hostNewGame() {
   for (const p of Object.values(players)) Object.assign(p, { pts: 0, p1: 0, p2: 0, p3: 0, inRace: false, fin: false, d: 0 });
-  level = 1; resetRun(); phase = 'lobby'; lastResults = null; setState('RLOBBY'); sendRoster();
+  completed = 0; level = 1; resetRun(); phase = 'lobby'; lastResults = null; setState('RLOBBY'); sendRoster();
 }
 
 // ---- connect ----
-function connect(c, host) {
+function connect(c, host, id) {
   return new Promise(resolve => {
     if (typeof Peer === 'undefined') { resolve('nolib'); return; }
-    code = c; isHost = host;
-    let done = false; const finish = r => { if (!done) { done = true; resolve(r); } };
-    peer = host ? new Peer(PEER_PREFIX + code) : new Peer();
-    peer.on('open', id => {
-      myId = host ? 'host' : id;
-      players = {};
-      if (host) {
-        players[myId] = { id: myId, name: myName || 'HOST', color: selColor, char: selChar, pts: 0, p1: 0, p2: 0, p3: 0, inRace: false, d: 0, y: GROUND, duck: false, fin: false, ft: 0 };
-        peer.on('connection', hostAddGuest);
-        finish('ok');
-      } else {
-        hostConn = peer.connect(PEER_PREFIX + code, { reliable: true }); lastHostMsg = performance.now();
-        hostConn.on('open', () => { sendTo(hostConn, { t: 'hello', name: myName, char: selChar, color: selColor }); finish('ok'); });
-        hostConn.on('data', m => { lastHostMsg = performance.now(); onHostData(m); });
-        hostConn.on('close', () => { hostConn = null; if (mode === 'race' && state !== 'IDLE') setState('RLOST'); });
-        hostConn.on('error', () => {});
-        setTimeout(() => finish(hostConn && hostConn.open ? 'ok' : 'timeout'), 12000);
-      }
+    code = c; isHost = host; myId = id; leaving = false; roomClosed = false;
+    let done = false, wait = null;
+    const finish = r => { if (!done) { done = true; clearInterval(wait); resolve(r); } };
+    const pe = host ? new Peer(PEER_PREFIX + code) : new Peer();
+    peer = pe;
+    pe.on('open', () => {
+      if (host) { pe.on('connection', hostOnConnection); finish('ok'); return; }
+      guestOpen();
+      const t0 = Date.now();
+      wait = setInterval(() => { if (hostConn && hostConn.open) finish('ok'); else if (Date.now() - t0 > 12000) finish('timeout'); }, 100);
     });
-    peer.on('error', err => {
+    pe.on('error', err => {
       const t = err && err.type;
-      if (t === 'unavailable-id') finish('taken');
-      else if (t === 'peer-unavailable') finish('nohost');
-      else finish('neterr');
+      if (!done) { finish(t === 'unavailable-id' ? 'taken' : t === 'peer-unavailable' ? 'nohost' : 'neterr'); return; }
+      if (!host && t === 'peer-unavailable') { hostConn = null; lostHost(); }
     });
-    peer.on('disconnected', () => { try { peer.reconnect(); } catch (e) {} });
+    pe.on('disconnected', () => { if (!leaving && peer === pe) { try { pe.reconnect(); } catch (e) {} } });
   });
 }
+// immediate teardown (errors, menu)
 function disconnect() {
+  leaving = true;
   try { if (hostConn) hostConn.close(); } catch (e) {}
   for (const c of guestConns.values()) { try { c.close(); } catch (e) {} }
   guestConns.clear();
   try { if (peer) peer.destroy(); } catch (e) {}
   peer = null; hostConn = null; players = {}; isHost = false;
+}
+// leaving on purpose: the host closes the room for everyone, a guest gives up their place
+function leaveRoom() {
+  if (peer) { if (isHost) broadcast({ t: 'closed' }); else sendTo(hostConn, { t: 'bye' }); }
+  forgetRoom();
+  const pe = peer, conns = [...guestConns.values()], hc = hostConn;
+  leaving = true; peer = null; hostConn = null; guestConns.clear(); players = {}; isHost = false; code = '';
+  setTimeout(() => { for (const c of conns) { try { c.close(); } catch (e) {} } try { hc && hc.close(); } catch (e) {} try { pe && pe.destroy(); } catch (e) {} }, 400);
 }
 
 // ======================= MENU / UI =======================
@@ -742,14 +844,14 @@ function el(tag, props = {}, kids = []) { const e = document.createElement(tag);
 
 function renderMenu() {
   mode = 'menu'; state = 'IDLE'; level = 1; resetRun();
-  show(pad, false); show(back, false);
+  show(pad, false); updateBack();
   panel.innerHTML = `
     <button class="big solo" id="bSolo">▶ משחק לבד</button>
     <button class="big duo" id="bRace">🏁 מירוץ עם חברים — אונליין</button>
     <div id="pick"></div>
     <div class="note">במירוץ: עד ${MAX_PLAYERS} שחקנים רצים באותו מסלול. מי שנתקע במכשול מתעכב רגע. בכל שלב מקבלים נקודות לפי סדר ההגעה, ואחרי ${MAX_LEVEL} שלבים יש מנצח.</div>`;
   $('pick').replaceWith(pickerCard());
-  $('bSolo').onclick = () => { keepAwake(); mode = 'solo'; lives = 3; startLevel(1); panel.innerHTML = ''; show(pad, true); show(back, true); $('jumpLabel').textContent = 'קפיצה'; };
+  $('bSolo').onclick = () => { keepAwake(); mode = 'solo'; lives = 3; startLevel(1); panel.innerHTML = ''; show(pad, true); updateBack(); $('jumpLabel').textContent = 'קפיצה'; };
   $('bRace').onclick = renderRaceSetup;
 }
 // Character + colour picker. Used in the menu, the race setup and the race lobby.
@@ -784,46 +886,81 @@ function lookChanged() {
   } else sendTo(hostConn, { t: 'hello', name: myName, char: selChar, color: selColor });
 }
 function newCode() { const a = 'abcdefghjkmnpqrstuvwxyz23456789'; let s = ''; for (let i = 0; i < 4; i++) s += a[Math.floor(Math.random() * a.length)]; return s; }
-function showSetupError(t) { disconnect(); renderRaceSetup(); const n = $('nStatus'); if (n) n.textContent = t; }
+function showSetupError(t) { forgetRoom(); disconnect(); renderRaceSetup(); const n = $('nStatus'); if (n) n.textContent = t; }
 
+let startRoom = null;   // set by renderRaceSetup; also used to reopen a saved room
 function renderRaceSetup() {
   mode = 'race'; state = 'IDLE';
-  show(pad, false); show(back, true);
+  show(pad, false); updateBack();
   panel.innerHTML = `
     <input id="iName" maxlength="12" placeholder="השם שלך">
     <div id="pick"></div>
-    <button class="big duo" id="bNew">צור חדר חדש (אתה המארח)</button>
-    <div class="row"><input id="iCode" maxlength="4" placeholder="קוד" dir="ltr" autocapitalize="characters"><button class="big ghost" id="bJoin">הצטרף</button></div>
+    <input id="iCode" maxlength="10" placeholder="קוד חדר" dir="ltr" autocapitalize="none" autocomplete="off">
+    <div class="row"><button class="big duo" id="bNew">צור חדר</button><button class="big ghost" id="bJoin">הצטרף</button></div>
     <div class="note" id="nStatus"></div>
-    <div class="note">כולם צריכים אינטרנט. אם החיבור לא מצליח ברשת סלולרית — נסו על Wi-Fi.</div>
-    <div class="note">⚠️ המארח צריך להשאיר את המשחק פתוח על המסך עד הסוף. אם הוא עובר לאפליקציה אחרת או נועל את המסך — המשחק נעצר לכולם. שלחו את הקוד לפני שמתחילים.</div>`;
+    <div class="note">רוצה קוד משלך? כתוב אותו (3–10 אותיות באנגלית או ספרות) ולחץ "צור חדר". בלי קוד ייבחר קוד אקראי. החברים כותבים את אותו קוד ולוחצים "הצטרף".</div>
+    <div class="note">⚠️ המארח צריך להשאיר את המשחק פתוח על המסך בזמן המירוץ. החדר נשאר פתוח עד שהמארח סוגר אותו — מי שמתנתק חוזר עם הנקודות שלו.</div>`;
   $('pick').replaceWith(pickerCard());
   const iName = $('iName'); iName.value = loadName();
-  const go = async (c, host) => {
-    myName = cleanName(iName.value); saveName(myName);
-    $('nStatus').textContent = 'מתחבר...';
+  const status = t => { const n = $('nStatus'); if (n) n.textContent = t; };
+  startRoom = async (c, host, restore) => {
+    myName = cleanName(iName.value) || (restore && cleanName(restore.name)) || ''; saveName(myName);
+    status('מתחבר...');
     keepAwake();
-    const r = await connect(c, host);
+    const id = (restore && cleanId(restore.me)) || freshId();
+    let r = await connect(c, host, id);
+    // reopening our own room after a reload: the old registration can take a few seconds to clear
+    for (let tries = 1; host && restore && r === 'taken' && tries <= 20; tries++) {
+      disconnect(); status(`פותח מחדש את החדר ${c.toUpperCase()}... (${tries})`);
+      await new Promise(res => setTimeout(res, 3000));
+      if (mode !== 'race' || state !== 'IDLE') return;        // the user went elsewhere meanwhile
+      r = await connect(c, host, id);
+    }
     if (r !== 'ok') {
+      if (!host && restore && (r === 'nohost' || r === 'timeout') && peer) { enterRoom(restore); setState('RRECONN'); updateBack(); return; }   // keep trying in the background
       disconnect();
-      if (r === 'taken') return go(newCode(), true);
-      const n = $('nStatus');
-      if (n) n.textContent = { nohost: 'לא נמצא חדר עם הקוד הזה. ודא שהמארח יצר חדר והמשחק פתוח אצלו.',
+      if (r === 'taken' && !restore && !cleanCode($('iCode').value)) return startRoom(newCode(), true);   // random code clashed: pick another
+      status({ taken: 'הקוד הזה כבר בשימוש. בחר קוד אחר — או לחץ "הצטרף" אם זה החדר של החבר שלך.',
+        nohost: 'לא נמצא חדר עם הקוד הזה. ודא שהמארח יצר חדר והמשחק פתוח אצלו.',
         timeout: 'החיבור לא הצליח. נסו על Wi-Fi ונסו שוב.', nolib: 'לא הצלחתי לטעון את רכיב החיבור. בדוק אינטרנט ורענן.',
-        neterr: 'בעיית רשת. נסה שוב בעוד רגע.' }[r] || 'שגיאה. נסה שוב.';
+        neterr: 'בעיית רשת. נסה שוב בעוד רגע.' }[r] || 'שגיאה. נסה שוב.');
+      if (restore) forgetRoom();
       return;
     }
-    level = 1; resetRun(); phase = 'lobby'; setState('RLOBBY');
-    $('jumpLabel').textContent = isHost ? 'קפיצה / התחל' : 'קפיצה';
-    show(pad, true);
-    renderRoomPanel();
+    enterRoom(restore);
   };
-  $('bNew').onclick = () => go(newCode(), true);
+  $('bNew').onclick = () => {
+    const raw = $('iCode').value.trim(), c = cleanCode(raw);
+    if (raw && !validCode(c)) { status('הקוד צריך להיות 3–10 אותיות באנגלית או ספרות'); return; }
+    startRoom(c || newCode(), true);
+  };
   $('bJoin').onclick = () => {
-    const c = $('iCode').value.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
-    if (c.length !== 4) { $('nStatus').textContent = 'הקוד צריך להיות 4 תווים'; return; }
-    go(c, false);
+    const c = cleanCode($('iCode').value);
+    if (!validCode(c)) { status('כתוב את קוד החדר שקיבלת (3–10 אותיות או ספרות)'); return; }
+    startRoom(c, false);
   };
+}
+function enterRoom(restore) {
+  lastResults = null; lastRoomSig = ''; phase = 'lobby';
+  if (isHost) {
+    players = {}; completed = 0;
+    if (restore && Array.isArray(restore.players)) {
+      for (const q of restore.players) {
+        const id = cleanId(q.id);
+        if (id) players[id] = newPlayer(id, { name: cleanName(q.name) || 'PLAYER', color: COLORS.includes(q.color) ? q.color : COLORS[1],
+          char: CHARS.some(c => c.id === q.char) ? q.char : 'dino', pts: +q.pts || 0, p1: +q.p1 || 0, p2: +q.p2 || 0, p3: +q.p3 || 0, online: false });
+      }
+      completed = Math.max(0, Math.min(MAX_LEVEL, +restore.completed || 0));
+    }
+    const mine = players[myId] || newPlayer(myId);
+    const colorFree = !Object.values(players).some(q => q.id !== myId && q.color === selColor);
+    players[myId] = Object.assign(mine, { name: myName || 'HOST', char: selChar, color: colorFree ? selColor : mine.color, online: true });
+    level = completed >= MAX_LEVEL ? 1 : completed + 1;
+  } else level = 1;
+  resetRun(); setState('RLOBBY');
+  $('jumpLabel').textContent = isHost ? 'קפיצה / התחל' : 'קפיצה';
+  show(pad, true); updateBack();
+  saveRoom(); renderRoomPanel();
 }
 
 function renderRoomPanel() {
@@ -831,19 +968,21 @@ function renderRoomPanel() {
   panel.textContent = '';
   if (phase === 'lobby') {
     panel.append(el('div', { className: 'card code', innerHTML: `קוד החדר: <b>${code.toUpperCase()}</b>` },
-      [el('div', { className: 'note', textContent: isHost ? 'שלחו את הקוד לחברים. כשכולם בפנים — לחץ קפיצה כדי להתחיל.' : 'מחכים שהמארח יתחיל.' })]));
+      [el('div', { className: 'note', textContent: isHost
+        ? 'שלחו את הקוד לחברים. כשכולם בפנים — לחץ קפיצה כדי להתחיל. החדר נשאר פתוח עד שתלחץ "✕ סגור חדר".'
+        : 'מחכים שהמארח יתחיל.' })]));
     panel.append(pickerCard());
   }
   const showResults = lastResults && (phase === 'results' || phase === 'final');
   const card = el('div', { className: 'card' });
-  card.append(el('h3', { textContent: phase === 'final' ? '🏆 טבלה סופית' : showResults ? `אחרי שלב ${lastResults.level}` : `שחקנים (${Object.keys(players).length}/${MAX_PLAYERS})` }));
+  card.append(el('h3', { textContent: phase === 'final' ? '🏆 טבלה סופית' : showResults ? `אחרי שלב ${lastResults.level}` : `שחקנים (${onlineCount()}/${MAX_PLAYERS})` }));
   const tbl = el('table');
   tbl.append(el('tr', {}, [el('th', { textContent: '#' }), el('th', { textContent: 'שחקן' }),
     el('th', { textContent: showResults ? 'בשלב' : '' }), el('th', { textContent: 'נק׳' }), el('th', { className: 'n', textContent: '🥇🥈🥉' })]));
   standings().forEach((p, i) => {
     const row = showResults ? lastResults.rows.find(r => r.id === p.id) : null;
     const lvl = row ? (row.place > 0 ? `${row.place} (+${row.got})` : row.place === 0 ? 'לא סיים' : '—') : '';
-    const nameCell = el('td', {}, [el('span', { className: 'dot', style: `background:${p.color}` }), document.createTextNode(charEmoji(p.char) + ' ' + (p.name || 'PLAYER') + (p.id === myId ? ' (אתה)' : ''))]);
+    const nameCell = el('td', {}, [el('span', { className: 'dot', style: `background:${p.color}` }), document.createTextNode(charEmoji(p.char) + ' ' + (p.name || 'PLAYER') + (p.id === myId ? ' (אתה)' : '') + (p.online === false ? ' 💤' : ''))]);
     tbl.append(el('tr', { className: p.id === myId ? 'me' : '' }, [el('td', { className: 'n', textContent: i + 1 }), nameCell,
       el('td', { className: 'n', textContent: lvl }), el('td', { className: 'n', textContent: p.pts }), el('td', { className: 'n', textContent: `${p.p1}·${p.p2}·${p.p3}` })]));
   });
@@ -851,7 +990,23 @@ function renderRoomPanel() {
   panel.append(card);
 }
 
-back.onclick = () => { disconnect(); renderMenu(); };
+let backArmed = null;
+function inRoom() { return mode === 'race' && state !== 'IDLE' && state !== 'RCLOSED' && !!code && !leaving; }
+function updateBack() {
+  clearTimeout(backArmed); backArmed = null;
+  show(back, mode !== 'menu');
+  back.textContent = inRoom() ? (isHost ? '✕ סגור חדר' : '✕ צא מהחדר') : '→ תפריט';
+}
+back.onclick = () => {
+  if (inRoom()) {
+    if (!backArmed) {                                        // ask once more, so nobody closes the room by accident
+      back.textContent = isHost ? 'לחץ שוב — החדר ייסגר לכולם' : 'לחץ שוב כדי לצאת';
+      backArmed = setTimeout(updateBack, 3000); return;
+    }
+    leaveRoom();
+  } else disconnect();
+  renderMenu();
+};
 
 // fixed 28ms step
 let acc = 0, last = performance.now();
@@ -912,6 +1067,16 @@ addEventListener('keyup', e => {
   if (e.code === 'Space' || e.code === 'ArrowUp') { keyJump = false; refreshInput(); }
   if (e.code === 'ArrowDown') { keyDuck = false; refreshInput(); }
 });
+
+// reopen a saved room when the page loads (after a reload, or the browser was closed)
+(function resumeRoom() {
+  const r = savedRoom();
+  if (!r) return;
+  renderRaceSetup();
+  if (r.name) $('iName').value = r.name;
+  $('iCode').value = r.code.toUpperCase();
+  startRoom(r.code, !!r.host, r);
+})();
 </script>
 </body>
 </html>
