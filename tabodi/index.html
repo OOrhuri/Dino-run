@@ -1,0 +1,1427 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no">
+<title>Tabodi Run</title>
+<script>window.GAME_THEME = { id: 'tabodi', title1: 'TABODI', title2: 'RUN', prefKey: 'tabodi', chars: ['tabodi','moose','owl','fox','bee','octo','yeti','ladybug'] };</script>
+<script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
+<style>
+  html, body { margin: 0; height: 100%; background: #111; color: #eee; font-family: system-ui, sans-serif;
+    -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; touch-action: manipulation; overflow: hidden; }
+  .wrap { height: 100%; display: flex; flex-direction: column; align-items: center; justify-content: flex-start; gap: 12px;
+    padding: 50px 10px 10px; box-sizing: border-box; position: relative; overflow-y: auto; }
+  .bezel { width: min(80vw, 42vh, 380px); aspect-ratio: 1; border-radius: 50%; padding: 10px; background: #1d3a8a;
+    box-shadow: 0 0 0 4px #0b1d4f, 0 10px 30px rgba(0,0,0,.6); box-sizing: border-box; flex: none; }
+  canvas { width: 100%; height: 100%; border-radius: 50%; display: block; background: #000; }
+  .pad { display: flex; gap: 16px; width: min(92vw, 420px); flex: none; }
+  .btn { flex: 1; height: 80px; border-radius: 22px; border: none; font-size: 22px; font-weight: 700; color: #fff;
+    display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; touch-action: none; font-family: inherit; }
+  .btn small { font-size: 13px; font-weight: 500; opacity: .85; }
+  #jump { background: #7c3aed; box-shadow: 0 6px 0 #4c1d95; }
+  #duck { background: #334155; box-shadow: 0 6px 0 #1e293b; }
+  .btn.on { transform: translateY(4px); box-shadow: 0 2px 0 rgba(0,0,0,.5); }
+  #panel { width: min(92vw, 420px); display: flex; flex-direction: column; gap: 10px; flex: none; }
+  .big { height: 56px; border-radius: 16px; border: none; font-size: 18px; font-weight: 700; color: #fff; font-family: inherit; }
+  .solo { background: #7c3aed; } .duo { background: #ea7a1a; } .ghost { background: #2a3245; }
+  .row { display: flex; gap: 8px; }
+  .row > * { flex: 1; }
+  input { height: 50px; border-radius: 14px; border: 2px solid #3a445c; background: #1b2132; color: #fff; font-size: 18px;
+    padding: 0 12px; box-sizing: border-box; font-family: inherit; text-align: center; min-width: 0; -webkit-user-select: text; user-select: text; }
+  .card { background: #1b2132; border-radius: 14px; padding: 10px 12px; font-size: 15px; line-height: 1.5; }
+  .code { text-align: center; }
+  .code b { font-size: 26px; letter-spacing: 4px; color: #ffd200; direction: ltr; display: inline-block; }
+  .note { font-size: 13px; opacity: .7; text-align: center; line-height: 1.5; }
+  table { width: 100%; border-collapse: collapse; font-size: 15px; }
+  td, th { padding: 5px 4px; text-align: right; }
+  th { font-size: 12px; opacity: .6; font-weight: 500; }
+  td.n { text-align: center; direction: ltr; }
+  tr.me td { color: #ffd200; font-weight: 700; }
+  .dot { display: inline-block; width: 11px; height: 11px; border-radius: 50%; margin-left: 6px; vertical-align: middle; }
+  h3 { margin: 0 0 6px; font-size: 16px; }
+  #mute { position: absolute; top: 10px; left: 10px; width: 40px; height: 36px; border-radius: 18px; border: none;
+    background: #2a3245; color: #fff; font-size: 18px; z-index: 2; }
+  #back { position: absolute; top: 10px; right: 10px; height: 36px; padding: 0 14px; border-radius: 18px; border: none;
+    background: #2a3245; color: #fff; font-size: 14px; font-family: inherit; z-index: 2; }
+  .chars { display: flex; gap: 6px; flex-wrap: wrap; }
+  .chip { flex: 1; min-width: 62px; height: 46px; border-radius: 12px; border: 2px solid transparent; background: #2a3245; color: #fff; font-size: 14px; font-family: inherit; }
+  .chip.sel { border-color: #ffd200; background: #3a3420; }
+  .colors { display: flex; gap: 9px; justify-content: center; margin-top: 10px; flex-wrap: wrap; }
+  .sw { width: 30px; height: 30px; border-radius: 50%; border: 3px solid transparent; padding: 0; }
+  .sw.sel { border-color: #fff; box-shadow: 0 0 0 2px #000 inset; }
+  .hidden { display: none !important; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <button id="back" class="hidden">→ תפריט</button>
+  <button id="mute" title="צליל">🔊</button>
+  <div class="bezel"><canvas id="c" width="240" height="240"></canvas></div>
+  <div class="pad hidden" id="pad">
+    <button class="btn" id="duck">⬇<small>התכופפות</small></button>
+    <button class="btn" id="jump">⬆<small id="jumpLabel">קפיצה</small></button>
+  </div>
+  <div id="panel"></div>
+</div>
+<script>
+// ---- GAME THEME: a copy of this file with a different block here is a different game ----
+const THEME = window.GAME_THEME || { id: 'dino', title1: 'DINO', title2: 'RUN', prefKey: 'dino', chars: null };
+document.title = THEME.title1 + ' ' + THEME.title2[0] + THEME.title2.slice(1).toLowerCase();
+const cv = document.getElementById('c'), g = cv.getContext('2d');
+const CX = 120, CY = 120, GROUND = 165, DX = 40, MAX_LEVEL = 10;
+const $ = id => document.getElementById(id);
+// older phones don't have roundRect: without this the game freezes on them
+if (typeof CanvasRenderingContext2D !== 'undefined' && !CanvasRenderingContext2D.prototype.roundRect) {
+  CanvasRenderingContext2D.prototype.roundRect = function (x, y, w, h, r) {
+    r = Math.max(0, Math.min(r, w / 2, h / 2));
+    this.moveTo(x + r, y); this.arcTo(x + w, y, x + w, y + h, r); this.arcTo(x + w, y + h, x, y + h, r);
+    this.arcTo(x, y + h, x, y, r); this.arcTo(x, y, x + w, y, r); this.closePath();
+  };
+}
+
+// ---- level settings ----
+const levelSpeed   = lv => Math.min(3 + (lv - 1) * 0.5, 7.5);
+const levelGoal    = lv => 6 + lv * 2;
+const levelTypes   = lv => Math.min(lv, 5);
+const levelGapRand = lv => Math.max(30, 130 - lv * 10);
+const raceLen      = lv => 1200 + lv * 400;         // race: track length per level
+const STUN_MS = 700;                                // race: how long a hit freezes you
+const POINTS = [10, 8, 6, 5, 4, 3, 2, 1];           // race: points by finishing place
+const FINISH_WAIT_MS = 15000;                       // race: level ends this long after the first finisher
+const MAX_PLAYERS = 8;
+const COLORS = ['#9650dc', '#f08a24', '#2bb3c0', '#e0457b', '#5cbf3a', '#3a6fe0', '#d4b106', '#a1887f'];
+const ALL_CHARS = [ { id: 'dino', emoji: '🦖', name: 'דינו' }, { id: 'robot', emoji: '🤖', name: 'רובוט' }, { id: 'penguin', emoji: '🐧', name: 'פינגווין' },
+                { id: 'cat', emoji: '🐱', name: 'חתול' }, { id: 'frog', emoji: '🐸', name: 'צפרדע' },
+                { id: 'princess', emoji: '👸', name: 'נסיכה' }, { id: 'unicorn', emoji: '🦄', name: 'חד-קרן' }, { id: 'ninja', emoji: '🥷', name: 'נינג׳ה' },
+                // Tabodi Run characters (original)
+                { id: 'tabodi', emoji: '🟢', name: 'טבודי' }, { id: 'moose', emoji: '🫎', name: 'מוזי' }, { id: 'owl', emoji: '🦉', name: 'ינשופי' },
+                { id: 'fox', emoji: '🦊', name: 'שועלי' }, { id: 'bee', emoji: '🐝', name: 'דבורית' }, { id: 'octo', emoji: '🐙', name: 'תמנוני' },
+                { id: 'yeti', emoji: '🧊', name: 'יטי' }, { id: 'ladybug', emoji: '🐞', name: 'פרת משה' } ];
+const CHARS = THEME.chars ? THEME.chars.map(id => ALL_CHARS.find(c => c.id === id)).filter(Boolean) : ALL_CHARS.slice(0, 8);
+const charEmoji = id => (CHARS.find(c => c.id === id) || CHARS[0]).emoji;
+function loadPref(k, ok, def) { try { const v = localStorage.getItem(k); return ok(v) ? v : def; } catch (e) { return def; } }
+function savePref(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
+let selChar = loadPref(THEME.prefKey + '-char', v => CHARS.some(c => c.id === v), CHARS[0].id);
+let selColor = loadPref(THEME.prefKey + '-color', v => COLORS.includes(v), COLORS[0]);
+
+const THEMES = [
+  { sky:'#78bef0', sand:'#e6c882', speck:'#b4965a', text:'#141e3c', cloud:'#ffffff' },
+  { sky:'#fa8c50', sand:'#c88246', speck:'#965a32', text:'#32141e', cloud:'#ffc8aa' },
+  { sky:'#463278', sand:'#966e5a', speck:'#64463c', text:'#ffffff', cloud:'#6e5aa0' },
+  { sky:'#0a0f28', sand:'#46465a', speck:'#28283c', text:'#ffffff', cloud:'#283250' },
+  { sky:'#3c0a0a', sand:'#782814', speck:'#dc5a14', text:'#ffe6c8', cloud:'#641e1e' },
+];
+const C = { dino:'#9650dc', eye:'#fff', cactus:'#28963c', bird:'#d23c46', heart:'#ff3250', gold:'#ffd200', silver:'#c8cdd8', bronze:'#d08a4a', dim:'#505050' };
+let T = THEMES[0];
+
+const CAC_S = 0, CAC_L = 1, CAC_D = 2, BIRD_LOW = 3, BIRD_HIGH = 4;
+const obWidth = t => t === CAC_S ? 10 : t === CAC_L ? 14 : t === CAC_D ? 26 : 22;
+function obBox(o) {
+  const x0 = o.x, x1 = o.x + obWidth(o.type);
+  const y = { [CAC_S]:[GROUND-22,GROUND], [CAC_L]:[GROUND-34,GROUND], [CAC_D]:[GROUND-22,GROUND],
+              [BIRD_LOW]:[GROUND-18,GROUND-6], [BIRD_HIGH]:[GROUND-38,GROUND-24] }[o.type];
+  return [x0, y[0], x1, y[1]];
+}
+
+// ---- shared state ----
+let mode = 'menu';           // 'menu' | 'solo' | 'race'
+let state = 'IDLE';
+let level = 1, lives = 3, cleared = 0, spawned = 0, speed = levelSpeed(1);
+let dinoY = GROUND, vy = 0, onGround = true, ducking = false, nextGap = 0;
+let stateTime = 0, invulnUntil = 0, now = 0;
+let obs = [];
+let input = { jump: false, duck: false }, jumpEdge = false;
+const rnd = (a, b) => a + (b - a) * Math.random();
+const clouds = [0,1,2].map(() => [rnd(0,240), rnd(55,110)]);
+const specks = Array.from({length:24}, () => [Math.random()*240, GROUND + 4 + Math.random()*24]);
+
+// ======================= SOUNDS (synthesized, no files) =======================
+let actx = null, muted = false, lastSfx = {};
+try { muted = localStorage.getItem('dino-mute') === '1'; } catch (e) {}
+function audioUnlock() {                       // browsers allow sound only after a tap
+  try {
+    if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+    if (actx.state === 'suspended') actx.resume();
+  } catch (e) {}
+}
+function tone(freq, dur, { type = 'square', vol = 0.18, slide = 0, delay = 0, attack = 0.005 } = {}) {
+  if (!actx || muted) return;
+  try {
+    const t0 = actx.currentTime + delay, o = actx.createOscillator(), gn = actx.createGain();
+    o.type = type; o.frequency.setValueAtTime(freq, t0);
+    if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq + slide), t0 + dur);
+    gn.gain.setValueAtTime(0.0001, t0); gn.gain.linearRampToValueAtTime(vol, t0 + attack);
+    gn.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(gn); gn.connect(actx.destination); o.start(t0); o.stop(t0 + dur + 0.05);
+  } catch (e) {}
+}
+function noise(dur, { vol = 0.2, delay = 0 } = {}) {       // for bumps and whooshes
+  if (!actx || muted) return;
+  try {
+    const n = Math.floor(actx.sampleRate * dur), buf = actx.createBuffer(1, n, actx.sampleRate), ch = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) ch[i] = (Math.random() * 2 - 1) * (1 - i / n);
+    const src = actx.createBufferSource(), gn = actx.createGain(), f = actx.createBiquadFilter();
+    f.type = 'lowpass'; f.frequency.value = 900; src.buffer = buf; gn.gain.value = vol;
+    src.connect(f); f.connect(gn); gn.connect(actx.destination); src.start(actx.currentTime + delay);
+  } catch (e) {}
+}
+const N = { C4: 262, D4: 294, E4: 330, F4: 349, G4: 392, A4: 440, B4: 494, C5: 523, D5: 587, E5: 659, G5: 784, C6: 1047 };
+function melody(notes, step, opts) { notes.forEach((n, i) => n && tone(n, step * 0.9, Object.assign({ delay: i * step }, opts))); }
+function sfx(name) {
+  if (!actx || muted) return;
+  const t = performance.now();
+  if (t - (lastSfx[name] || 0) < 40) return; lastSfx[name] = t;      // no machine-gun repeats
+  switch (name) {
+    case 'jump':   tone(300, 0.18, { slide: 350, vol: 0.14 }); break;
+    case 'land':   tone(140, 0.07, { type: 'triangle', vol: 0.12 }); break;
+    case 'duck':   noise(0.08, { vol: 0.08 }); break;
+    case 'pass':   tone(N.C6, 0.06, { type: 'sine', vol: 0.07 }); break;
+    case 'hit':    noise(0.25, { vol: 0.35 }); tone(180, 0.3, { type: 'sawtooth', slide: -120, vol: 0.18 }); break;
+    case 'tick':   tone(N.A4, 0.12, { vol: 0.15 }); break;
+    case 'go':     tone(N.A4 * 2, 0.35, { vol: 0.18 }); break;
+    case 'start':  melody([N.C4, N.E4, N.G4], 0.09, { vol: 0.14 }); break;
+    case 'finish': melody([N.G4, N.C5, N.E5, N.G5], 0.08, { type: 'triangle', vol: 0.18 }); break;
+    case 'clear':  melody([N.C5, N.E5, N.G5, N.C6, 0, N.G5, N.C6], 0.11, { type: 'triangle', vol: 0.16 }); break;
+    case 'prize':  melody([N.E5, N.G5, N.C6, N.E5, N.G5, N.C6], 0.09, { type: 'sine', vol: 0.18 }); tone(N.C6, 0.6, { type: 'sine', vol: 0.12, delay: 0.55 }); break;
+    case 'win':    melody([N.C5, N.C5, N.C5, N.E5, N.G5, N.E5, N.G5, N.C6], 0.13, { type: 'triangle', vol: 0.18 }); melody([N.C4, 0, N.G4, 0, N.C4, 0, N.G4, N.C5], 0.13, { type: 'sine', vol: 0.12 }); break;
+    case 'over':   melody([N.E4, N.D4, N.C4, 0, 196], 0.18, { type: 'sawtooth', vol: 0.12 }); break;
+    case 'join':   melody([N.E5, N.G5], 0.08, { type: 'sine', vol: 0.12 }); break;
+    case 'leave':  melody([N.G4, N.E4], 0.1, { type: 'sine', vol: 0.1 }); break;
+    case 'click':  tone(N.C6, 0.04, { type: 'sine', vol: 0.08 }); break;
+    case 'life':   melody([N.C5, N.E5], 0.07, { type: 'sine', vol: 0.12 }); break;
+  }
+}
+function setMuted(v) { muted = v; try { localStorage.setItem('dino-mute', v ? '1' : '0'); } catch (e) {} $('mute').textContent = v ? '🔇' : '🔊'; }
+
+const STATE_SFX = { INTRO: 'start', CLEAR: 'clear', WIN: 'win', OVER: 'over', RDONE: 'finish', RFINAL: 'win', RCLOSED: 'leave' };
+function setState(s) {
+  const prev = state; state = s; stateTime = now;
+  if (s === 'RRES') sfx(lastResults && lastResults.family ? 'prize' : 'clear');
+  else if (s === 'RCOUNT') { sfx('tick'); countShown = 3; }
+  else if (STATE_SFX[s] && prev !== s) sfx(STATE_SFX[s]);
+}
+let countShown = 0;
+function resetRun() {
+  if (typeof myFin !== 'undefined') { myFin = false; myFt = 0; d = 0; }
+  speed = levelSpeed(level); T = THEMES[(level - 1) % 5];
+  cleared = 0; spawned = 0; obs = []; dinoY = GROUND; vy = 0; onGround = true; ducking = false; nextGap = 0;
+}
+function startLevel(lv) { level = lv; resetRun(); setState('INTRO'); }
+
+// ---- drawing helpers ----
+function rr(x, y, w, h, r, col) { g.fillStyle = col; g.beginPath(); g.roundRect(x, y, w, h, r); g.fill(); }
+function rect(x, y, w, h, col) { g.fillStyle = col; g.fillRect(x, y, w, h); }
+function tri(a, b, c, d, e, f, col) { g.fillStyle = col; g.beginPath(); g.moveTo(a,b); g.lineTo(c,d); g.lineTo(e,f); g.fill(); }
+function circ(x, y, r, col) { g.fillStyle = col; g.beginPath(); g.arc(x, y, r, 0, Math.PI*2); g.fill(); }
+function htext(s, y, px, col, x = CX) {
+  g.fillStyle = col; g.font = `bold ${px}px system-ui, sans-serif`; g.textAlign = 'center'; g.textBaseline = 'top';
+  g.fillText(s, x, y);
+}
+function text(s, y, size, col, x = CX, align = 'center') {
+  g.fillStyle = col; g.font = `bold ${size * 8}px monospace`; g.textAlign = align; g.textBaseline = 'top';
+  g.fillText(s, x, y);
+}
+function dinoShape(x, b, duck, col, legA) {
+  if (!duck) {
+    tri(x, b-20, x+9, b-24, x+9, b-12, col);
+    rr(x+6, b-25, 18, 17, 5, col);
+    rr(x+16, b-36, 17, 13, 4, col);
+    rect(x+26, b-33, 3, 3, C.eye);
+    rect(x+25, b-26, 7, 1, C.eye);
+    rect(x+22, b-17, 5, 2, col);
+    rect(x+9, b-9, 4, legA ? 9 : 5, col);
+    rect(x+17, b-9, 4, legA ? 5 : 9, col);
+  } else {
+    tri(x, b-12, x+6, b-14, x+6, b-8, col);
+    rr(x+4, b-15, 24, 11, 5, col);
+    rr(x+22, b-19, 15, 11, 4, col);
+    rect(x+31, b-17, 3, 3, C.eye);
+    rect(x+9, b-5, 4, legA ? 5 : 3, col);
+    rect(x+18, b-5, 4, legA ? 3 : 5, col);
+  }
+}
+// All characters share the same size and hitbox, so nobody gets an advantage.
+function robotShape(x, b, duck, col, legA) {
+  const metal = '#555', visor = '#7ff';
+  if (!duck) {
+    rect(x+11, b-8, 4, legA ? 8 : 5, metal); rect(x+21, b-8, 4, legA ? 5 : 8, metal);
+    rr(x+8, b-24, 22, 16, 3, col); rect(x+13, b-20, 8, 6, 'rgba(255,255,255,.35)');
+    rr(x+12, b-37, 20, 13, 3, col); rect(x+21, b-33, 9, 4, visor);
+    rect(x+21, b-42, 2, 5, metal); circ(x+22, b-43, 2, C.heart);
+    rect(x+29, b-20, 6, 3, col);
+  } else {
+    rr(x+4, b-15, 26, 11, 3, col); rr(x+24, b-19, 14, 11, 3, col); rect(x+30, b-16, 7, 3, visor);
+    rect(x+8, b-4, 4, legA ? 4 : 3, metal); rect(x+20, b-4, 4, legA ? 3 : 4, metal);
+  }
+}
+function penguinShape(x, b, duck, col, legA) {
+  const beak = '#f5a623';
+  if (!duck) {
+    rr(x+9, b-36, 20, 33, 10, col); rr(x+15, b-29, 13, 24, 6, '#fff');
+    circ(x+23, b-31, 2.5, '#fff'); rect(x+23, b-32, 2, 2, '#111');
+    tri(x+28, b-30, x+28, b-26, x+35, b-28, beak);
+    rect(x + (legA ? 12 : 14), b-3, 6, 3, beak); rect(x + (legA ? 22 : 20), b-3, 6, 3, beak);
+  } else {
+    rr(x+3, b-16, 32, 13, 6, col); rr(x+7, b-9, 25, 6, 3, '#fff');
+    circ(x+28, b-12, 2, '#fff'); rect(x+28, b-13, 1, 1, '#111');
+    tri(x+34, b-13, x+34, b-9, x+39, b-11, beak);
+  }
+}
+function catShape(x, b, duck, col, legA) {
+  if (!duck) {
+    rr(x+1, b-34, 4, 16, 2, col);
+    rr(x+5, b-22, 22, 13, 6, col);
+    circ(x+27, b-27, 8, col);
+    tri(x+21, b-32, x+23, b-39, x+27, b-33, col); tri(x+28, b-33, x+32, b-39, x+34, b-30, col);
+    rect(x+28, b-29, 3, 3, '#fff'); rect(x+29, b-28, 2, 2, '#111'); rect(x+33, b-26, 2, 2, '#f9a');
+    rect(x+8, b-9, 3, legA ? 9 : 6, col); rect(x+15, b-9, 3, legA ? 6 : 9, col); rect(x+21, b-9, 3, legA ? 9 : 6, col);
+  } else {
+    rr(x, b-14, 10, 3, 1, col); rr(x+5, b-12, 24, 9, 4, col); circ(x+31, b-11, 6, col);
+    tri(x+27, b-15, x+29, b-20, x+31, b-15, col); tri(x+31, b-15, x+34, b-20, x+36, b-13, col);
+    rect(x+32, b-13, 2, 2, '#fff');
+    rect(x+9, b-3, 3, 3, col); rect(x+21, b-3, 3, 3, col);
+  }
+}
+function frogShape(x, b, duck, col, legA) {
+  const eye = (cx, cy, r) => { circ(cx, cy, r, col); circ(cx + 1, cy - 1, r - 2, '#fff'); rect(cx + 1, cy - 2, 2, 2, '#111'); };
+  if (!duck) {
+    rr(x+5, b-10, 11, 8, 4, col);
+    rr(x+8, b-26, 22, 20, 8, col); rr(x+12, b-18, 12, 10, 4, 'rgba(255,255,255,.35)');
+    eye(x+19, b-29, 5); eye(x+27, b-29, 5);
+    rect(x+20, b-17, 10, 1, '#111');
+    rect(x + (legA ? 24 : 22), b-6, 7, 6, col);
+  } else {
+    rr(x+4, b-14, 30, 12, 6, col); eye(x+22, b-14, 4); eye(x+29, b-14, 4);
+    rect(x+26, b-7, 7, 1, '#111');
+    rect(x+4, b-4, 8, 4, col); rect(x+26, b-4, 8, 4, col);
+  }
+}
+const SKIN = '#f5d0a9';
+function princessShape(x, b, duck, col, legA) {
+  const hair = '#f4c430', crown = C.gold;
+  if (!duck) {
+    rr(x+12, b-37, 9, 18, 4, hair);                                  // hair behind
+    tri(x+19, b-24, x+7, b-3, x+31, b-3, col);                       // dress
+    rr(x+14, b-26, 11, 9, 3, col);                                   // bodice
+    rect(x+23, b-22, 7, 2, SKIN);                                    // arm
+    rect(x + (legA ? 14 : 16), b-3, 4, 3, '#333'); rect(x + (legA ? 22 : 20), b-3, 4, 3, '#333');
+    circ(x+21, b-31, 6, SKIN);                                       // head
+    rect(x+15, b-37, 11, 3, hair);                                   // fringe
+    rect(x+15, b-40, 11, 3, crown);                                  // crown
+    tri(x+15, b-40, x+16, b-44, x+18, b-40, crown); tri(x+19, b-40, x+20.5, b-45, x+22, b-40, crown); tri(x+23, b-40, x+25, b-44, x+26, b-40, crown);
+    circ(x+20.5, b-41, 1, C.heart);
+    rect(x+23, b-32, 2, 2, '#111'); rect(x+23, b-28, 3, 1, '#c0392b');
+  } else {
+    rr(x+21, b-19, 8, 11, 3, hair);
+    rr(x+3, b-12, 27, 10, 5, col);
+    circ(x+30, b-12, 6, SKIN);
+    rect(x+26, b-20, 9, 2, crown); tri(x+26, b-20, x+27, b-23, x+29, b-20, crown); tri(x+30, b-20, x+31, b-24, x+33, b-20, crown);
+    rect(x+32, b-14, 2, 2, '#111');
+  }
+}
+function unicornShape(x, b, duck, col, legA) {
+  const mane = '#ff7eb6';
+  if (!duck) {
+    rr(x, b-23, 6, 11, 3, mane);                                     // tail
+    rr(x+4, b-22, 22, 12, 5, col);                                   // body
+    rect(x+7, b-11, 3, legA ? 11 : 8, col); rect(x+12, b-11, 3, legA ? 8 : 11, col);
+    rect(x+19, b-11, 3, legA ? 11 : 8, col); rect(x+23, b-11, 3, legA ? 8 : 11, col);
+    rr(x+20, b-33, 9, 16, 4, col);                                   // neck
+    rr(x+24, b-33, 12, 8, 3, col);                                   // head
+    rr(x+18, b-34, 4, 14, 2, mane);                                  // mane
+    tri(x+26, b-33, x+29, b-33, x+30, b-43, C.gold);                 // horn
+    rect(x+29, b-31, 2, 2, '#111');
+  } else {
+    rr(x, b-12, 6, 6, 3, mane);
+    rr(x+3, b-13, 24, 10, 4, col);
+    rr(x+24, b-17, 13, 8, 3, col);
+    rr(x+22, b-18, 4, 9, 2, mane);
+    tri(x+31, b-17, x+34, b-17, x+39, b-23, C.gold);
+    rect(x+32, b-15, 2, 2, '#111');
+    rect(x+6, b-3, 4, 3, col); rect(x+20, b-3, 4, 3, col);
+  }
+}
+function ninjaShape(x, b, duck, col, legA) {
+  const band = C.heart;
+  if (!duck) {
+    rect(x+8, b-33, 7, 2, band); rect(x+6, b-31, 5, 2, band);        // headband tails
+    rect(x+12, b-9, 4, legA ? 9 : 6, col); rect(x+20, b-9, 4, legA ? 6 : 9, col);
+    rr(x+10, b-25, 16, 16, 4, col);
+    rect(x+10, b-16, 16, 2, band);                                   // belt
+    rect(x+25, b-22, 8, 3, col);                                     // arm
+    circ(x+20, b-31, 7, col);
+    rect(x+17, b-33, 11, 4, SKIN); rect(x+23, b-32, 2, 2, '#111');   // eye slit
+    rect(x+14, b-37, 12, 2, band);
+  } else {
+    rect(x+14, b-16, 6, 2, band);
+    rr(x+6, b-15, 22, 11, 5, col);
+    circ(x+29, b-12, 6, col);
+    rect(x+26, b-14, 9, 3, SKIN); rect(x+31, b-14, 2, 2, '#111');
+    rect(x+9, b-4, 4, 4, col); rect(x+20, b-4, 4, 4, col);
+  }
+}
+// ---- Tabodi Run cast (all original). Same footprint and hitbox as the others. ----
+function tabodiShape(x, b, duck, col, legA) {
+  // a round, striped forest critter with two antennae and one big tooth
+  const stripe = 'rgba(0,0,0,.18)';
+  if (!duck) {
+    rect(x+10, b-6, 4, legA ? 6 : 4, col); rect(x+22, b-6, 4, legA ? 4 : 6, col);
+    rr(x+6, b-32, 24, 27, 11, col);
+    for (let i = 0; i < 3; i++) rect(x+6, b-26 + i * 7, 24, 3, stripe);
+    rr(x+11, b-22, 14, 14, 6, '#fff7d6');
+    rect(x+13, b-36, 2, 6, col); circ(x+14, b-37, 2.5, C.gold); rect(x+21, b-36, 2, 6, col); circ(x+22, b-37, 2.5, C.gold);
+    circ(x+15, b-23, 4, '#fff'); circ(x+23, b-23, 4, '#fff'); rect(x+15, b-24, 2.5, 2.5, '#111'); rect(x+23, b-24, 2.5, 2.5, '#111');
+    rect(x+17, b-16, 4, 4, '#fff');
+  } else {
+    rr(x+3, b-16, 30, 14, 7, col);
+    for (let i = 0; i < 3; i++) rect(x+8 + i * 8, b-16, 3, 14, stripe);
+    circ(x+22, b-10, 3, '#fff'); circ(x+29, b-10, 3, '#fff'); rect(x+22, b-11, 2, 2, '#111'); rect(x+29, b-11, 2, 2, '#111');
+    rect(x+30, b-20, 2, 5, col); circ(x+31, b-21, 2, C.gold);
+    rect(x+8, b-3, 4, 3, col); rect(x+22, b-3, 4, 3, col);
+  }
+}
+function mooseShape(x, b, duck, col, legA) {
+  const antler = '#d9a066', nose = '#3a2a22';
+  if (!duck) {
+    rect(x+8, b-10, 4, legA ? 10 : 7, col); rect(x+14, b-10, 4, legA ? 7 : 10, col); rect(x+22, b-10, 4, legA ? 10 : 7, col);
+    rr(x+5, b-24, 24, 15, 6, col);
+    rr(x+22, b-36, 13, 13, 5, col); rr(x+28, b-31, 9, 8, 4, nose);
+    rect(x+30, b-34, 2, 2, '#fff'); rect(x+31, b-34, 1, 1, '#111');
+    rect(x+24, b-42, 2, 7, antler); rect(x+20, b-41, 6, 2, antler); rect(x+20, b-44, 2, 4, antler);
+    rect(x+29, b-42, 2, 7, antler); rect(x+28, b-41, 6, 2, antler); rect(x+32, b-44, 2, 4, antler);
+  } else {
+    rr(x+3, b-13, 26, 10, 5, col); rr(x+24, b-17, 12, 9, 4, col); rr(x+31, b-14, 7, 6, 3, nose);
+    rect(x+26, b-21, 2, 5, antler); rect(x+23, b-21, 7, 2, antler);
+    rect(x+8, b-4, 4, 4, col); rect(x+20, b-4, 4, 4, col);
+  }
+}
+function owlShape(x, b, duck, col, legA) {
+  const beak = '#f5a623', face = '#fff2d0';
+  if (!duck) {
+    rect(x+12, b-4, 4, 4, beak); rect(x+20, b-4, 4, 4, beak);
+    rr(x+7, b-36, 22, 33, 10, col);
+    rr(x+10, b-22, 16, 16, 6, face);
+    circ(x+14, b-28, 5, '#fff'); circ(x+23, b-28, 5, '#fff'); circ(x+15, b-28, 2.5, '#111'); circ(x+22, b-28, 2.5, '#111');
+    tri(x+16, b-23, x+21, b-23, x+18.5, b-18, beak);
+    tri(x+8, b-34, x+6, b-41, x+13, b-36, col); tri(x+28, b-34, x+30, b-41, x+23, b-36, col);
+    rect(x + (legA ? 4 : 6), b-26, 5, 12, 'rgba(0,0,0,.15)');
+  } else {
+    rr(x+3, b-16, 32, 13, 7, col); rr(x+18, b-13, 14, 9, 4, face);
+    circ(x+23, b-10, 3, '#fff'); circ(x+30, b-10, 3, '#fff'); rect(x+23, b-11, 2, 2, '#111'); rect(x+30, b-11, 2, 2, '#111');
+    tri(x+26, b-6, x+29, b-6, x+27.5, b-3, beak);
+    rect(x+9, b-3, 4, 3, beak); rect(x+21, b-3, 4, 3, beak);
+  }
+}
+function foxShape(x, b, duck, col, legA) {
+  const tip = '#fff';
+  if (!duck) {
+    rr(x, b-22, 9, 7, 3, col); rr(x, b-22, 4, 7, 2, tip);
+    rr(x+6, b-22, 22, 12, 5, col);
+    rect(x+9, b-10, 3, legA ? 10 : 7, col); rect(x+14, b-10, 3, legA ? 7 : 10, col); rect(x+22, b-10, 3, legA ? 10 : 7, col);
+    rr(x+21, b-32, 14, 12, 5, col); tri(x+30, b-26, x+38, b-24, x+30, b-21, col); circ(x+37, b-24, 1.5, '#111');
+    tri(x+22, b-31, x+23, b-39, x+27, b-31, col); tri(x+30, b-31, x+33, b-39, x+34, b-31, col);
+    rect(x+27, b-29, 2, 2, '#111'); rr(x+26, b-25, 8, 5, 2, tip);
+  } else {
+    rr(x, b-11, 8, 6, 3, col); rr(x, b-11, 3, 6, 2, tip);
+    rr(x+5, b-13, 24, 10, 5, col); rr(x+24, b-16, 12, 9, 4, col); tri(x+33, b-12, x+40, b-10, x+33, b-8, col);
+    tri(x+25, b-16, x+26, b-21, x+29, b-16, col); tri(x+31, b-16, x+34, b-21, x+35, b-16, col);
+    rect(x+30, b-13, 2, 2, '#111');
+    rect(x+9, b-3, 3, 3, col); rect(x+21, b-3, 3, 3, col);
+  }
+}
+function beeShape(x, b, duck, col, legA) {
+  const wing = 'rgba(255,255,255,.75)', dark = '#222';
+  const flap = Math.floor(performance.now() / 70) % 2;
+  if (!duck) {
+    rr(x+7, b-24, 24, 16, 8, col); rect(x+13, b-24, 4, 16, dark); rect(x+21, b-24, 4, 16, dark);
+    tri(x+6, b-17, x+1, b-16, x+7, b-14, dark);
+    circ(x+30, b-19, 7, col); circ(x+32, b-21, 2, '#fff'); rect(x+32, b-22, 1.5, 1.5, '#111');
+    rect(x+28, b-30, 1, 5, dark); circ(x+28, b-31, 1.5, dark); rect(x+33, b-30, 1, 5, dark); circ(x+33, b-31, 1.5, dark);
+    rr(x+10, b-36 + flap * 3, 10, 12 - flap * 3, 5, wing); rr(x+19, b-36 + flap * 3, 10, 12 - flap * 3, 5, wing);
+    rect(x+12, b-8, 3, 4, dark); rect(x+20, b-8, 3, 4, dark);
+  } else {
+    rr(x+3, b-13, 28, 10, 5, col); rect(x+9, b-13, 4, 10, dark); rect(x+17, b-13, 4, 10, dark);
+    circ(x+32, b-10, 5, col); rect(x+33, b-12, 1.5, 1.5, '#111');
+    rr(x+9, b-18, 8, 5, 2, wing); rr(x+17, b-18, 8, 5, 2, wing);
+  }
+}
+function octoShape(x, b, duck, col, legA) {
+  const w = Math.floor(performance.now() / 120) % 2;
+  if (!duck) {
+    rr(x+7, b-36, 24, 22, 11, col);
+    circ(x+15, b-26, 4, '#fff'); circ(x+23, b-26, 4, '#fff'); rect(x+15, b-26, 2.5, 2.5, '#111'); rect(x+23, b-26, 2.5, 2.5, '#111');
+    rect(x+16, b-20, 6, 1.5, '#111');
+    for (let i = 0; i < 4; i++) { const tx = x+8 + i * 6, wig = (i + w) % 2 ? 3 : 0; rr(tx, b-15, 4, 12 + wig, 2, col); circ(tx+2, b-3 + wig, 2.5, col); }
+  } else {
+    rr(x+4, b-16, 30, 13, 7, col);
+    circ(x+22, b-11, 3, '#fff'); circ(x+29, b-11, 3, '#fff'); rect(x+22, b-11, 2, 2, '#111'); rect(x+29, b-11, 2, 2, '#111');
+    for (let i = 0; i < 5; i++) rr(x+5 + i * 6, b-4, 4, 4, 2, col);
+  }
+}
+function yetiShape(x, b, duck, col, legA) {
+  const fur = '#f4f8ff', face = '#9ec5e8';
+  if (!duck) {
+    rect(x+9, b-8, 5, legA ? 8 : 5, fur); rect(x+21, b-8, 5, legA ? 5 : 8, fur);
+    rr(x+6, b-30, 24, 23, 9, fur); rr(x+10, b-20, 16, 10, 5, col);
+    rr(x+9, b-38, 18, 12, 6, fur); rr(x+12, b-35, 12, 8, 4, face);
+    rect(x+14, b-33, 2, 2, '#111'); rect(x+20, b-33, 2, 2, '#111'); rect(x+15, b-29, 6, 1.5, '#111');
+    rect(x+2, b-26, 5, 10, fur); rect(x+29, b-26, 5, 10, fur);
+  } else {
+    rr(x+3, b-16, 30, 13, 7, fur); rr(x+22, b-14, 10, 8, 4, face); rr(x+6, b-12, 14, 7, 3, col);
+    rect(x+25, b-12, 2, 2, '#111'); rect(x+29, b-12, 2, 2, '#111');
+    rect(x+8, b-3, 5, 3, fur); rect(x+22, b-3, 5, 3, fur);
+  }
+}
+function ladybugShape(x, b, duck, col, legA) {
+  const dark = '#222';
+  if (!duck) {
+    rect(x+10, b-5, 3, 5, dark); rect(x+17, b-5, 3, 5, dark); rect(x+24, b-5, 3, 5, dark);
+    rr(x+5, b-28, 26, 24, 12, col); rect(x+17, b-28, 2, 22, dark);
+    circ(x+11, b-20, 2.5, dark); circ(x+25, b-20, 2.5, dark); circ(x+13, b-11, 2.5, dark); circ(x+23, b-11, 2.5, dark);
+    circ(x+18, b-32, 7, dark); circ(x+15, b-33, 2.5, '#fff'); circ(x+21, b-33, 2.5, '#fff'); rect(x+15, b-34, 1.5, 1.5, '#111'); rect(x+21, b-34, 1.5, 1.5, '#111');
+    rect(x+14, b-42, 1, 5, dark); circ(x+14, b-42, 1.5, dark); rect(x+22, b-42, 1, 5, dark); circ(x+22, b-42, 1.5, dark);
+  } else {
+    rr(x+3, b-14, 28, 12, 6, col); rect(x+16, b-14, 2, 12, dark);
+    circ(x+9, b-9, 2, dark); circ(x+23, b-9, 2, dark);
+    circ(x+32, b-10, 5, dark); rect(x+32, b-12, 2, 2, '#fff');
+    rect(x+8, b-3, 3, 3, dark); rect(x+20, b-3, 3, 3, dark);
+  }
+}
+const SHAPES = { robot: robotShape, penguin: penguinShape, cat: catShape, frog: frogShape, princess: princessShape, unicorn: unicornShape, ninja: ninjaShape,
+                 tabodi: tabodiShape, moose: mooseShape, owl: owlShape, fox: foxShape, bee: beeShape, octo: octoShape, yeti: yetiShape, ladybug: ladybugShape };
+function charShape(kind, x, b, duck, col, legA) {
+  if (SHAPES[kind]) { SHAPES[kind](x, b, duck, col, legA); return; }
+  if (kind === 'robot') robotShape(x, b, duck, col, legA);
+  else if (kind === 'penguin') penguinShape(x, b, duck, col, legA);
+  else if (kind === 'cat') catShape(x, b, duck, col, legA);
+  else if (kind === 'frog') frogShape(x, b, duck, col, legA);
+  else if (kind === 'princess') princessShape(x, b, duck, col, legA);
+  else if (kind === 'unicorn') unicornShape(x, b, duck, col, legA);
+  else if (kind === 'ninja') ninjaShape(x, b, duck, col, legA);
+  else dinoShape(x, b, duck, col, legA);
+}
+function drawDino(duck, col = selColor, running = true) { charShape(selChar, DX, Math.round(dinoY), duck, col, running && onGround && Math.floor(now / 90) % 2); }
+function drawCactus(cx, h) {
+  const top = GROUND - h;
+  rr(cx-3, top, 6, h, 3, C.cactus);
+  rr(cx-7, top+7, 3, 8, 1, C.cactus); rect(cx-7, top+13, 5, 3, C.cactus);
+  rr(cx+4, top+4, 3, 8, 1, C.cactus); rect(cx+2, top+10, 5, 3, C.cactus);
+}
+function drawBird(x, top) {
+  tri(x, top+4, x+6, top+6, x, top+10, C.bird);
+  rr(x+4, top+4, 14, 7, 3, C.bird);
+  circ(x+19, top+6, 4, C.bird);
+  tri(x+22, top+4, x+22, top+8, x+27, top+6, C.gold);
+  rect(x+19, top+4, 2, 2, C.eye);
+  if (Math.floor(now / 150) % 2) tri(x+7, top+6, x+15, top+6, x+10, top-5, C.bird);
+  else tri(x+7, top+9, x+15, top+9, x+10, top+18, C.bird);
+}
+function drawObstacle(o) {
+  const x = Math.round(o.x);
+  if (o.type === CAC_S) drawCactus(x+5, 22);
+  else if (o.type === CAC_L) drawCactus(x+7, 34);
+  else if (o.type === CAC_D) { drawCactus(x+6, 22); drawCactus(x+20, 18); }
+  else if (o.type === BIRD_LOW) drawBird(x, GROUND-18);
+  else drawBird(x, GROUND-38);
+}
+function drawWorld(moveBy) {
+  rect(0, 0, 240, 240, T.sky);
+  for (const c of clouds) {
+    c[0] -= moveBy * 0.25; if (c[0] < -30) { c[0] = 260; c[1] = rnd(55, 110); }
+    rr(c[0], c[1], 28, 9, 4, T.cloud); rr(c[0]+7, c[1]-5, 14, 9, 4, T.cloud);
+  }
+  rect(0, GROUND, 240, 240 - GROUND, T.sand);
+  rect(0, GROUND, 240, 1, T.speck);
+  for (const s of specks) {
+    s[0] -= moveBy; if (s[0] < 0) s[0] += 240;
+    rect(Math.round(s[0]), Math.round(s[1]), 3, 1, T.speck);
+  }
+}
+function drawRing(f) {
+  g.strokeStyle = C.dim; g.lineWidth = 1; g.beginPath(); g.arc(CX, CY, 117, 0, Math.PI*2); g.stroke();
+  if (f > 0) { g.strokeStyle = C.gold; g.lineWidth = 5; g.lineCap = 'round';
+    g.beginPath(); g.arc(CX, CY, 116, -Math.PI/2, -Math.PI/2 + Math.PI*2*Math.min(f, 1)); g.stroke(); }
+}
+function drawHearts(n, y) {
+  for (let i = 0; i < n; i++) {
+    const hx = CX - (n - 1) * 7 + i * 14;
+    circ(hx-2, y, 3, C.heart); circ(hx+2, y, 3, C.heart); tri(hx-5, y+1, hx+5, y+1, hx, y+7, C.heart);
+  }
+}
+function drawFlag(x) {
+  rect(x, GROUND - 46, 2, 46, '#333');
+  for (let i = 0; i < 4; i++) for (let j = 0; j < 3; j++) rect(x + 2 + i * 5, GROUND - 46 + j * 5, 5, 5, (i + j) % 2 ? '#fff' : '#111');
+}
+const ord = n => n + (n % 10 === 1 && n !== 11 ? 'ST' : n % 10 === 2 && n !== 12 ? 'ND' : n % 10 === 3 && n !== 13 ? 'RD' : 'TH');
+
+// ---- physics shared by both modes ----
+function physics() {
+  const up = input.jump, down = input.duck;
+  if (onGround && up && now - pressAt <= 150) { vy = -11; onGround = false; pressAt = -1e9; sfx('jump'); }
+  if (!onGround) {
+    if (!up && vy < -5) vy = -5;
+    if (down) vy += 1.5;
+    vy += 0.8; dinoY += vy;
+    if (dinoY >= GROUND) { dinoY = GROUND; vy = 0; onGround = true; sfx('land'); }
+  }
+  const wasDucking = ducking;
+  ducking = onGround && down;
+  if (ducking && !wasDucking) sfx('duck');
+}
+function hitTest(o) {
+  const b = dinoY;
+  const dx0 = ducking ? DX+5 : DX+8, dx1 = ducking ? DX+34 : DX+30, dy0 = ducking ? b-16 : b-32, dy1 = b-1;
+  const [x0, y0, x1, y1] = obBox(o);
+  return dx0 < x1 && dx1 > x0 && dy0 < y1 && dy1 > y0;
+}
+
+// ======================= SOLO =======================
+function spawnSolo() {
+  if (spawned >= levelGoal(level)) return;
+  let rightmost = -1000;
+  for (const o of obs) rightmost = Math.max(rightmost, o.x + obWidth(o.type));
+  if (240 - rightmost < nextGap) return;
+  obs.push({ x: 245, type: Math.floor(Math.random() * levelTypes(level)), passed: false });
+  spawned++;
+  nextGap = speed * 30 + 40 + Math.random() * levelGapRand(level);
+}
+function soloTick(edge) {
+  const waited = now - stateTime > 600, blink = Math.floor(now / 500) % 2;
+  switch (state) {
+    case 'INTRO':
+      drawWorld(0); drawDino(false);
+      text('LEVEL ' + level, 70, 3, T.text);
+      text('JUMP ' + levelGoal(level) + ' OBSTACLES', 105, 1, T.text);
+      if (level === 4) text('WATCH OUT: BIRDS!', 120, 1, C.bird);
+      if (level === 5) text('HIGH BIRDS: DUCK!', 120, 1, C.bird);
+      if (now - stateTime > 1800 || (waited && edge)) { invulnUntil = now + 800; setState('PLAY'); }
+      break;
+    case 'PLAY':
+      physics();
+      spawnSolo();
+      for (const o of obs) {
+        o.x -= o.type >= BIRD_LOW ? speed + 0.6 : speed;
+        const [, , x1] = obBox(o);
+        if (!o.passed && x1 < DX) { o.passed = true; cleared++; sfx('pass'); }
+        if (now > invulnUntil && !o.passed && hitTest(o)) { invulnUntil = now + 1200; o.passed = true; cleared++; lives--; sfx('hit'); if (lives <= 0) setState('OVER'); }
+      }
+      obs = obs.filter(o => o.x + obWidth(o.type) > -5);
+      if (state === 'PLAY' && cleared >= levelGoal(level)) { if (lives < 5) { lives++; sfx('life'); } setState(level >= MAX_LEVEL ? 'WIN' : 'CLEAR'); }
+      drawWorld(speed);
+      for (const o of obs) drawObstacle(o);
+      if (!(now < invulnUntil && Math.floor(now / 100) % 2)) drawDino(ducking);
+      text('LEVEL ' + level, 22, 2, T.text); drawHearts(lives, 48);
+      text(cleared + '/' + levelGoal(level), 195, 2, T.text);
+      drawRing(cleared / levelGoal(level));
+      break;
+    case 'CLEAR':
+      drawWorld(0); drawDino(false); drawRing(1);
+      text('LEVEL', 70, 3, C.gold); text('CLEAR!', 100, 3, C.gold);
+      if (now - stateTime > 1800 || (waited && edge)) startLevel(level + 1);
+      break;
+    case 'OVER':
+      drawWorld(0); drawDino(true);
+      text('GAME', 60, 3, C.heart); text('OVER', 90, 3, C.heart);
+      text('LEVEL ' + level, 125, 2, T.text);
+      if (blink) text('PRESS TO RETRY', 150, 1, T.text);
+      if (waited && edge) { lives = 3; startLevel(level); }
+      break;
+    case 'WIN':
+      drawWorld(speed); drawDino(false);
+      text('YOU', 60, 4, C.gold); text('WIN!', 100, 4, C.gold);
+      if (blink) text('PRESS TO PLAY AGAIN', 145, 1, T.text);
+      if (waited && edge) { lives = 3; startLevel(1); }
+      break;
+  }
+}
+
+// ======================= RACE (online, up to 8 players) =======================
+// The room creator is the HOST: everyone connects to the host, the host decides
+// when levels start, collects finish times, gives points and sends the tables.
+// Every player gets the same course (same random seed), so the race is fair.
+//
+// The room stays open until the host closes it ("✕ סגור חדר"):
+//  - every player has a stable id, so after a reload or a dropped connection they
+//    come back to the same place with their points;
+//  - guests reconnect by themselves;
+//  - the host's phone remembers the room (code, players, points) and reopens it
+//    with the same code after a reload.
+const PEER_PREFIX = THEME.id + 'run-race-v1-';
+const ROOM_KEY = THEME.prefKey + '-room';
+let peer = null, isHost = false, hostConn = null;
+const guestConns = new Map();          // host only: player id -> connection
+let myId = '', myName = '', code = '';
+let players = {};                      // id -> {id, name, color, char, pts, p1, p2, p3, inRace, online, d, y, duck, fin, ft, seen}
+let phase = 'lobby';                   // lobby | wait | count | race | results | final
+let completed = 0;                     // host: levels finished in this game
+let course = null, d = 0, stunUntil = 0, raceStart = 0, myFin = false, myFt = 0, firstFinishAt = 0;
+let lastResults = null, sendT = 0, roomSendT = 0, lastHostMsg = 0, lastRoomSig = '', lastAttempt = 0;
+let leaving = false, roomClosed = false;
+let raceId = 0;
+// ---- FAMILY GAME: every player wins a different prize in every level ----
+let familyMode = false;
+const FAMILY_POINTS = 10;                // everyone gets the same points in a family game
+const FAMILY_WAIT_MS = 25000;            // more patience for the little ones
+let myStats = null;                      // what I did in the current race
+function newStats() { return { jumps: 0, air: 0, duck: 0, hits: 0, shave: 0, streak: 0, best: 0, maxH: 0 }; }
+// Each award: how to score a player (bigger = better) and when the winner really deserves it.
+const AWARDS = [
+  { id: 'fast',    emoji: '🏁', name: 'הכי מהיר',          score: p => p.fin ? -p.ft : -1e9 + p.d,            ok: p => p.fin },
+  { id: 'careful', emoji: '🛡️', name: 'הכי זהיר',          score: p => -p.s.hits * 1e6 + (p.fin ? -p.ft : -1e9 + p.d), ok: p => true },
+  { id: 'jumper',  emoji: '🦘', name: 'מלך הקפיצות',       score: p => p.s.jumps,  ok: p => p.s.jumps > 0 },
+  { id: 'high',    emoji: '🚀', name: 'הקפיצה הגבוהה',     score: p => p.s.maxH,   ok: p => p.s.maxH > 0 },
+  { id: 'air',     emoji: '🪂', name: 'הכי הרבה באוויר',   score: p => p.s.air,    ok: p => p.s.air > 0 },
+  { id: 'duck',    emoji: '🦆', name: 'אלוף ההתכופפות',    score: p => p.s.duck,   ok: p => p.s.duck > 0 },
+  { id: 'shave',   emoji: '😅', name: 'על הקשקש',          score: p => p.s.shave,  ok: p => p.s.shave > 0 },
+  { id: 'streak',  emoji: '🔥', name: 'הרצף הארוך',        score: p => p.s.best,   ok: p => p.s.best >= 2 },
+  { id: 'brave',   emoji: '💪', name: 'הכי אמיץ',          score: p => p.s.hits,   ok: p => p.s.hits > 0 },
+  { id: 'scenic',  emoji: '🐢', name: 'נהנה מהנוף',        score: p => p.fin ? p.ft : 1e9 - p.d, ok: p => true },
+];
+const SPIRIT = { id: 'spirit', emoji: '🌟', name: 'רוח ספורטיבית' };
+const awardById = id => AWARDS.find(a => a.id === id) || SPIRIT;
+// Give every racer exactly one award, each award to one racer. For every player we
+// prefer the award where they did best; a clear winner beats a tie, and an award the
+// player already got in earlier levels counts a bit against it, so prizes vary.
+function assignAwards(racers) {
+  const pairs = [];
+  for (const a of AWARDS) {
+    const list = racers.filter(p => a.ok(p)).map(p => ({ p, v: a.score(p) })).sort((x, y) => y.v - x.v);
+    list.forEach(e => {
+      const rank = list.findIndex(o => o.v === e.v) + 1;
+      const ties = list.filter(o => o.v === e.v).length;
+      const repeats = (e.p.had || []).filter(id => id === a.id).length;
+      pairs.push({ id: e.p.id, award: a.id, key: rank + repeats, ties, r: Math.random() });
+    });
+  }
+  pairs.sort((x, y) => x.key - y.key || x.ties - y.ties || x.r - y.r);
+  const got = {}, used = new Set();
+  for (const q of pairs) if (!got[q.id] && !used.has(q.award)) { got[q.id] = q.award; used.add(q.award); }
+  for (const p of racers) if (!got[p.id]) got[p.id] = 'spirit';
+  return got;
+}
+const statNum = v => Math.max(0, Math.min(1e7, +v || 0));
+function cleanStats(s) { const o = newStats(); if (s && typeof s === 'object') for (const k of Object.keys(o)) o[k] = statNum(s[k]); return o; }
+function awardSummary(list) {                  // ['fast','jumper','fast'] -> '🏁×2 🦘'
+  const n = {}; for (const id of list || []) n[id] = (n[id] || 0) + 1;
+  return Object.entries(n).map(([id, k]) => awardById(id).emoji + (k > 1 ? '×' + k : '')).join(' ');
+}                        // id of the current race; progress messages from any other race are ignored
+
+function cleanName(s) { return String(s || '').replace(/[^\p{L}\p{N} _-]/gu, '').trim().slice(0, 12); }
+const cleanId = s => String(s || '').replace(/[^a-z0-9]/gi, '').slice(0, 16);
+const cleanCode = s => String(s || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+const validCode = c => /^[a-z0-9]{3,10}$/.test(c);
+function freshId() { return Math.random().toString(36).slice(2, 12); }
+function mulberry32(a) { return () => { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+function makeCourse(seed, lv) {
+  const r = mulberry32(seed + lv * 7919), sp = levelSpeed(lv), L = raceLen(lv), list = [];
+  let p = 380;
+  while (p < L - 120) { list.push({ p, type: Math.floor(r() * levelTypes(lv)), passed: false, x: 999 }); p += sp * 30 + 40 + r() * levelGapRand(lv); }
+  return { L, obs: list };
+}
+const me = () => players[myId];
+function newPlayer(id, extra) {
+  return Object.assign({ id, name: 'PLAYER', color: COLORS[1], char: CHARS[0].id, pts: 0, p1: 0, p2: 0, p3: 0, inRace: false, online: true,
+                         d: 0, y: GROUND, duck: false, fin: false, ft: 0, seen: now }, extra || {});
+}
+const onlineCount = () => Object.values(players).filter(p => p.online !== false).length;
+
+// ---- room memory (so a reload doesn't lose the room) ----
+function saveRoom() {
+  if (!code || leaving) return;
+  const data = { code, host: isHost, me: myId, name: myName, ts: Date.now() };
+  if (isHost) { data.completed = completed; data.family = familyMode; data.players = Object.values(players).map(p => ({ id: p.id, name: p.name, color: p.color, char: p.char, pts: p.pts, p1: p.p1, p2: p.p2, p3: p.p3, awards: p.awards || [] })); }
+  savePref(ROOM_KEY, JSON.stringify(data));
+}
+function forgetRoom() { try { localStorage.removeItem(ROOM_KEY); } catch (e) {} }
+function savedRoom() {
+  try { const r = JSON.parse(localStorage.getItem(ROOM_KEY) || 'null'); return r && validCode(r.code) && Date.now() - r.ts < 12 * 3600e3 ? r : null; }
+  catch (e) { return null; }
+}
+
+// ---- sending ----
+function sendTo(c, msg) { try { if (c && c.open) c.send(msg); } catch (e) {} }
+function broadcast(msg) { for (const c of guestConns.values()) sendTo(c, msg); }
+function rosterMsg() {
+  return { t: 'room', phase, level, completed, family: familyMode, players: Object.values(players).map(p => ({ id: p.id, name: p.name, color: p.color, char: p.char,
+           pts: p.pts, p1: p.p1, p2: p.p2, p3: p.p3, awards: p.awards || [], inRace: p.inRace, online: p.online !== false })) };
+}
+function sendRoster() { broadcast(rosterMsg()); saveRoom(); renderRoomPanel(); }
+
+// ---- host: guests connecting ----
+function hostOnConnection(c) {
+  let id = null;
+  c.on('data', m => {
+    if (!m || typeof m !== 'object') return;
+    if (m.t === 'hello') {
+      const cid = cleanId(m.cid) || cleanId(c.peer);
+      if (id && id !== cid) return;
+      if (!players[cid]) {
+        if (onlineCount() >= MAX_PLAYERS) { sendTo(c, { t: 'full' }); setTimeout(() => { try { c.close(); } catch (e) {} }, 500); return; }
+        const used = new Set(Object.values(players).map(p => p.color));
+        players[cid] = newPlayer(cid, { color: COLORS.find(x => !used.has(x)) || COLORS[1], char: CHARS[0].id });
+        sfx('join');
+      }
+      const old = guestConns.get(cid);
+      id = cid; guestConns.set(cid, c);
+      if (old && old !== c) { try { old.close(); } catch (e) {} }
+      const p = players[cid];
+      p.online = true; p.seen = now;
+      p.name = cleanName(m.name) || p.name || 'PLAYER';
+      if (CHARS.some(x => x.id === m.char)) p.char = m.char;
+      if (COLORS.includes(m.color) && !Object.values(players).some(q => q.id !== cid && q.color === m.color)) p.color = m.color;
+      sendRoster();
+      if (lastResults && (phase === 'results' || phase === 'final')) sendTo(c, lastResults);
+      return;
+    }
+    if (!id || !players[id] || guestConns.get(id) !== c) return;
+    const p = players[id]; p.seen = now;
+    if (m.t === 'bye') {                                   // the guest left on purpose
+      guestConns.delete(id); delete players[id]; try { c.close(); } catch (e) {} sendRoster(); return;
+    }
+    if (m.t === 'st') {
+      if (m.rid !== raceId || m.lv !== level || !p.inRace || (phase !== 'race' && phase !== 'count')) return;   // ignore updates left over from another race
+      p.d = +m.d || 0; p.y = +m.y || GROUND; p.duck = !!m.duck;
+      if (m.s) p.stats = cleanStats(m.s);
+      if (m.fin && !p.fin) { p.fin = true; p.ft = +m.ft || 0; if (!firstFinishAt) firstFinishAt = now; }
+    }
+  });
+  c.on('close', () => {
+    if (id && guestConns.get(id) === c) {                // dropped: keep their place and points
+      guestConns.delete(id);
+      const p = players[id]; if (p) { p.online = false; p.inRace = false; }
+      sendRoster();
+    }
+  });
+  c.on('error', () => {});
+}
+
+// ---- guest: talking to the host ----
+function onHostData(m) {
+  if (!m || typeof m !== 'object') return;
+  if (m.t === 'room') {
+    const sig = JSON.stringify([m.phase, m.level, m.players]);
+    const changed = sig !== lastRoomSig; lastRoomSig = sig;
+    const old = players; players = {};
+    for (const q of m.players || []) players[q.id] = Object.assign({ d: 0, y: GROUND, duck: false, fin: false, ft: 0 }, old[q.id] || {}, q);
+    if (Object.keys(players).length > Object.keys(old).length && Object.keys(old).length) sfx('join');
+    completed = m.completed || 0;
+    familyMode = !!m.family;
+    if (m.phase === 'lobby' && phase !== 'lobby') { phase = 'lobby'; level = m.level || 1; resetRun(); setState('RLOBBY'); }
+    if (changed) renderRoomPanel();
+  } else if (m.t === 'st') {
+    for (const [id, s] of Object.entries(m.p || {})) if (players[id] && id !== myId) Object.assign(players[id], s);
+  } else if (m.t === 'start') {
+    beginCountdown(m.level, m.seed, m.ids || []);
+  } else if (m.t === 'res') {
+    lastResults = m; phase = m.final ? 'final' : 'results'; level = m.level || level;
+    familyMode = !!m.family;
+    for (const row of m.rows) if (players[row.id]) Object.assign(players[row.id], { pts: row.total, p1: row.p1, p2: row.p2, p3: row.p3, awards: row.awards || [] });
+    setState(m.final ? 'RFINAL' : 'RRES'); renderRoomPanel();
+  } else if (m.t === 'closed') {
+    roomClosed = true; forgetRoom(); setState('RCLOSED');
+    const pe = peer; peer = null; hostConn = null; setTimeout(() => { try { pe && pe.destroy(); } catch (e) {} }, 300);
+    updateBack();
+  } else if (m.t === 'full') {
+    showSetupError('החדר מלא (עד ' + MAX_PLAYERS + ' שחקנים).');
+  }
+}
+function guestOpen() {
+  if (!peer || peer.destroyed || leaving || roomClosed) return;
+  if (peer.disconnected) { try { peer.reconnect(); } catch (e) {} }
+  if (hostConn) { const o = hostConn; hostConn = null; try { o.close(); } catch (e) {} }
+  lastAttempt = performance.now();
+  let c;
+  try { c = peer.connect(PEER_PREFIX + code, { reliable: true }); } catch (e) { return; }
+  hostConn = c;
+  c.on('open', () => {
+    if (hostConn !== c) return;
+    lastHostMsg = performance.now();
+    sendTo(c, { t: 'hello', cid: myId, name: myName, char: selChar, color: selColor });
+    if (state === 'RRECONN') { phase = 'wait'; lastRoomSig = ''; setState('RLOBBY'); renderRoomPanel(); }
+  });
+  c.on('data', m => { if (hostConn !== c) return; lastHostMsg = performance.now(); onHostData(m); });
+  c.on('close', () => { if (hostConn === c) { hostConn = null; lostHost(); } });
+  c.on('error', () => {});
+}
+function lostHost() {
+  if (leaving || roomClosed || isHost || mode !== 'race') return;
+  if (state !== 'IDLE' && state !== 'RCLOSED') setState('RRECONN');
+}
+// Watchdog: guests keep trying to get back to the host; the host keeps its code registered.
+setInterval(() => {
+  if (mode !== 'race' || !peer || leaving || roomClosed) return;
+  if (isHost) { if (peer.disconnected && !peer.destroyed) { try { peer.reconnect(); } catch (e) {} } return; }
+  const t = performance.now();
+  if (hostConn && hostConn.open && t - lastHostMsg > 8000) { const o = hostConn; hostConn = null; try { o.close(); } catch (e) {} lostHost(); }
+  if (!(hostConn && hostConn.open) && t - lastAttempt > 4000 && state !== 'IDLE') { lostHost(); guestOpen(); }
+}, 1000);
+
+// ---- host logic ----
+function hostStartLevel(lv) {
+  const seed = Math.floor(Math.random() * 1e9);
+  const ids = Object.values(players).filter(p => p.online !== false).map(p => p.id);
+  for (const p of Object.values(players)) Object.assign(p, { inRace: ids.includes(p.id), d: 0, fin: false, ft: 0, stats: newStats() });
+  firstFinishAt = 0;
+  broadcast({ t: 'start', level: lv, seed, ids });
+  beginCountdown(lv, seed, ids);
+  sendRoster();
+}
+function hostCheckLevelEnd() {
+  const racers = Object.values(players).filter(p => p.inRace);
+  const allDone = racers.length > 0 && racers.every(p => p.fin);
+  if (!allDone && !(firstFinishAt && now - firstFinishAt > (familyMode ? FAMILY_WAIT_MS : FINISH_WAIT_MS)) && racers.length > 0) return;
+  const finished = racers.filter(p => p.fin).sort((a, b) => a.ft - b.ft);
+  const notFinished = racers.filter(p => !p.fin).sort((a, b) => b.d - a.d);
+  const rows = [];
+  if (familyMode) {
+    // family game: everybody wins one prize and the same points
+    const me0 = players[myId]; if (me0 && me0.inRace) me0.stats = cleanStats(myStats);
+    const got = assignAwards(racers.map(p => ({ id: p.id, fin: p.fin, ft: p.ft, d: p.d, s: p.stats || newStats(), had: p.awards || [] })));
+    finished.forEach((p, i) => rows.push({ id: p.id, place: i + 1, ft: p.ft, got: FAMILY_POINTS, award: got[p.id] }));
+    notFinished.forEach(p => rows.push({ id: p.id, place: 0, ft: 0, got: FAMILY_POINTS, award: got[p.id] }));
+    for (const r of rows) { const p = players[r.id]; p.pts += FAMILY_POINTS; p.awards = (p.awards || []).concat(r.award); }
+  } else {
+    finished.forEach((p, i) => {
+      const got = POINTS[i] || 0; p.pts += got;
+      if (i === 0) p.p1++; else if (i === 1) p.p2++; else if (i === 2) p.p3++;
+      rows.push({ id: p.id, place: i + 1, ft: p.ft, got });
+    });
+    notFinished.forEach(p => rows.push({ id: p.id, place: 0, ft: 0, got: 0 }));
+  }
+  for (const p of Object.values(players)) p.inRace = false;
+  completed = level;
+  const final = level >= MAX_LEVEL;
+  const totals = Object.values(players).map(p => ({ id: p.id, total: p.pts, p1: p.p1, p2: p.p2, p3: p.p3, awards: p.awards || [] }));
+  const msg = { t: 'res', level, final, family: familyMode, rows: totals.map(t => Object.assign(t, rows.find(r => r.id === t.id) || { place: -1, got: 0, ft: 0 })) };
+  lastResults = msg; phase = final ? 'final' : 'results';
+  broadcast(msg); sendRoster();
+  setState(final ? 'RFINAL' : 'RRES');
+}
+
+// ---- both ----
+function beginCountdown(lv, seed, ids) {
+  raceId = seed; level = lv; resetRun(); course = makeCourse(seed, lv); myStats = newStats();
+  d = 0; stunUntil = 0; myFin = false; myFt = 0; obs = course.obs;
+  for (const id of ids) if (players[id]) Object.assign(players[id], { inRace: true, d: 0, fin: false, ft: 0 });
+  if (!ids.includes(myId)) { phase = 'wait'; setState('RLOBBY'); renderRoomPanel(); return; }   // joined mid-level: wait for the next one
+  phase = 'count'; setState('RCOUNT'); renderRoomPanel();
+}
+function standings() {
+  return Object.values(players).sort((a, b) => b.pts - a.pts || b.p1 - a.p1 || b.p2 - a.p2 || b.p3 - a.p3);
+}
+function livePlace() {
+  const racers = Object.values(players).filter(p => p.inRace);
+  racers.sort((a, b) => (a.fin && b.fin) ? a.ft - b.ft : a.fin ? -1 : b.fin ? 1 : b.d - a.d);
+  return { place: racers.findIndex(p => p.id === myId) + 1, of: racers.length };
+}
+
+function raceTick(edge) {
+  const blink = Math.floor(now / 500) % 2;
+  const m = me();
+  if (m) { m.d = d; m.y = dinoY; m.duck = ducking; m.fin = m.fin || myFin; if (myFin) m.ft = myFt; }
+  const myColor = m ? m.color : selColor;
+
+  switch (state) {
+    case 'RLOBBY': {
+      dinoY = GROUND; vy = 0; onGround = true;
+      drawWorld(0); drawDino(false, myColor);
+      const n = onlineCount();
+      text('PLAYERS: ' + n, 40, 2, T.text);
+      text('CODE ' + code.toUpperCase(), 70, code.length > 6 ? 1 : 2, C.gold);
+      if (isHost) {
+        const next = completed >= MAX_LEVEL ? 1 : completed + 1;
+        if (blink) text(completed > 0 && completed < MAX_LEVEL ? 'JUMP = CONTINUE LEVEL ' + next : n > 1 ? 'PRESS JUMP TO START' : 'WAITING FOR PLAYERS', 105, 1, T.text);
+        if (edge) { if (completed >= MAX_LEVEL) hostNewGame(); hostStartLevel(next); }
+      } else text(phase === 'lobby' ? 'WAITING FOR HOST...' : 'JOINING NEXT LEVEL...', 105, 1, T.text);
+      break;
+    }
+    case 'RCOUNT': {
+      drawWorld(0); drawDino(false, myColor);
+      const left = 3 - Math.floor((now - stateTime) / 1000);
+      if (left < countShown && left >= 1) { countShown = left; sfx('tick'); }
+      text('LEVEL ' + level, 40, 2, T.text);
+      text(String(Math.max(left, 1)), 70, 6, C.gold);
+      if (left <= 0) { phase = 'race'; raceStart = now; invulnUntil = now + 600; setState('RRACE'); sfx('go'); }
+      break;
+    }
+    case 'RRACE': case 'RDONE': {
+      const running = !myFin && now >= stunUntil;
+      if (!myFin) {
+        const wasOnGround = onGround;
+        physics();
+        if (running) d += speed;
+        const st = myStats || (myStats = newStats());
+        if (wasOnGround && !onGround) st.jumps++;
+        if (!onGround) { st.air += 28; st.maxH = Math.max(st.maxH, Math.round(GROUND - dinoY)); }
+        if (ducking) st.duck += 28;
+        for (const o of obs) {
+          o.x = DX + (o.p - d);
+          if (!o.passed) {                                   // how close did I get? (for "על הקשקש")
+            const [x0, y0, x1, y1] = obBox(o);
+            if (DX + 30 > x0 && DX + 8 < x1) {
+              const gap = o.type === BIRD_HIGH ? (dinoY - (ducking ? 16 : 32)) - y1 : y0 - dinoY;
+              o.minGap = Math.min(o.minGap === undefined ? 99 : o.minGap, gap);
+            }
+          }
+          if (!o.passed && o.x + obWidth(o.type) < DX) {
+            o.passed = true; st.streak++; st.best = Math.max(st.best, st.streak); sfx('pass');
+            if (o.minGap !== undefined && o.minGap < 8) st.shave++;
+          }
+          if (now > invulnUntil && !o.passed && hitTest(o)) { o.passed = true; st.hits++; st.streak = 0; stunUntil = now + STUN_MS; invulnUntil = now + STUN_MS + 600; sfx('hit'); }
+        }
+        if (d >= course.L) { d = course.L; myFin = true; myFt = now - raceStart; dinoY = GROUND; onGround = true; if (m) { m.fin = true; m.ft = myFt; } if (isHost && !firstFinishAt) firstFinishAt = now; setState('RDONE'); }
+      } else for (const o of obs) o.x = DX + (o.p - d);
+
+      drawWorld(running ? speed : 0);
+      drawFlag(DX + (course.L - d) + 34);
+      for (const o of obs) if (o.x > -30 && o.x < 250) drawObstacle(o);
+      // other players as see-through ghosts
+      g.globalAlpha = 0.5;
+      for (const p of Object.values(players)) {
+        if (p.id === myId || !p.inRace) continue;
+        const sx = DX + ((p.fin ? course.L : p.d) - d);
+        if (sx > -40 && sx < 245) charShape(p.char, sx, Math.round(p.y || GROUND), !!p.duck, p.color, !p.fin && Math.floor(now / 90) % 2);
+      }
+      g.globalAlpha = 1;
+      const stunned = now < stunUntil;
+      if (!(now < invulnUntil && Math.floor(now / 100) % 2)) drawDino(ducking, myColor, running);
+      if (stunned) text('OUCH!', GROUND - 58, 1, C.heart, DX + 18);
+
+      text('LEVEL ' + level, 22, 2, T.text);
+      // progress bar with everyone
+      const mx0 = 58, mx1 = 182, my = 52;
+      rect(mx0, my, mx1 - mx0, 2, T.text); rect(mx1, my - 6, 2, 14, T.text);
+      for (const p of Object.values(players)) if (p.inRace && p.id !== myId) circ(mx0 + (mx1 - mx0) * Math.min((p.fin ? course.L : p.d) / course.L, 1), my + 1, 4, p.color);
+      circ(mx0 + (mx1 - mx0) * Math.min(d / course.L, 1), my + 1, 6, myColor);
+      if (familyMode) {
+        if (myFin) { text('FINISHED!', 80, 2, C.gold); text('WAITING FOR EVERYONE', 110, 1, T.text); }
+      } else {
+        const lp = livePlace();
+        if (myFin) { text('FINISHED!', 80, 2, C.gold); text(ord(lp.place) + ' PLACE', 102, 2, T.text); text('WAITING FOR OTHERS', 128, 1, T.text); }
+        else text(ord(lp.place) + ' / ' + lp.of, 190, 2, T.text);
+      }
+      drawRing(d / course.L);
+      if (isHost) hostCheckLevelEnd();
+      break;
+    }
+    case 'RRES': {
+      dinoY = GROUND; vy = 0; onGround = true;
+      drawWorld(0); drawDino(false, myColor, false);
+      text('LEVEL ' + level, 26, 2, T.text);
+      if (lastResults && lastResults.family) {
+        const mine = lastResults.rows.find(r => r.id === myId);
+        if (mine && mine.award) {
+          const a = awardById(mine.award);
+          htext('🥇 ניצחת!', 50, 20, C.gold);
+          htext(a.emoji, 76, 34, '#000');
+          htext(a.name, 116, 18, T.text);
+        } else htext('הסיבוב הבא בדרך...', 70, 16, T.text);
+        htext('כל אחד זכה במשהו!', 180, 13, T.text);
+        if (isHost && now - stateTime > 7000) hostStartLevel(level + 1);
+        break;
+      }
+      const rows = (lastResults ? lastResults.rows : []).filter(r => r.place > 0).sort((a, b) => a.place - b.place).slice(0, 3);
+      const medal = [C.gold, C.silver, C.bronze];
+      rows.forEach((r, i) => {
+        const p = players[r.id]; const nm = p ? (p.name || 'PLAYER').toUpperCase() : '?';
+        circ(52, 62 + i * 24, 8, medal[i]); text(String(i + 1), 58 + i * 24, 1, '#111', 52);
+        text(nm, 56 + i * 24, 2, p ? p.color : T.text, 66, 'left');
+      });
+      if (!rows.length) text('NOBODY FINISHED', 70, 1, T.text);
+      text('NEXT LEVEL SOON', 140, 1, T.text);
+      if (isHost && now - stateTime > 6000) hostStartLevel(level + 1);
+      break;
+    }
+    case 'RFINAL': {
+      dinoY = GROUND; vy = 0; onGround = true;
+      drawWorld(speed * 0.5); drawDino(false, myColor);
+      if (familyMode) {
+        htext('🎉 כולם ניצחו! 🎉', 34, 20, C.gold);
+        const mine = me();
+        if (mine) { htext('אספת ' + (mine.awards || []).length + ' פרסים', 66, 16, T.text); htext(awardSummary(mine.awards).slice(0, 24), 92, 16, '#000'); }
+        if (isHost) { if (blink) text('JUMP = NEW GAME', 130, 1, T.text); if (edge && now - stateTime > 1500) hostNewGame(); }
+        else htext('הטבלה למטה', 130, 13, T.text);
+        break;
+      }
+      const top = standings()[0];
+      text('WINNER', 30, 3, C.gold);
+      if (top) { text((top.name || 'PLAYER').toUpperCase(), 62, 2, top.color); text(top.pts + ' POINTS', 86, 1, T.text); }
+      if (isHost) { if (blink) text('JUMP = NEW GAME', 130, 1, T.text); if (edge && now - stateTime > 1500) hostNewGame(); }
+      else text('SEE TABLE BELOW', 130, 1, T.text);
+      break;
+    }
+    case 'RRECONN':
+      dinoY = GROUND; vy = 0; onGround = true;
+      drawWorld(0); drawDino(false, myColor, false);
+      text('RECONNECTING' + '.'.repeat(1 + Math.floor(now / 400) % 3), 60, 2, C.gold, CX - 64, 'left');
+      text('ROOM ' + code.toUpperCase(), 90, code.length > 6 ? 1 : 2, T.text);
+      text('YOUR POINTS ARE KEPT', 120, 1, T.text);
+      break;
+    case 'RCLOSED':
+      dinoY = GROUND; vy = 0; onGround = true;
+      drawWorld(0); drawDino(false, myColor, false);
+      text('ROOM', 60, 3, C.heart); text('CLOSED', 90, 3, C.heart);
+      if (blink) text('PRESS JUMP FOR MENU', 135, 1, T.text);
+      if (edge && now - stateTime > 800) { disconnect(); renderMenu(); }
+      break;
+  }
+
+  // guests: say so when the host stopped answering (host switched app / locked the screen)
+  if (!isHost && state !== 'RRECONN' && state !== 'RCLOSED' && performance.now() - lastHostMsg > 4000) {
+    rect(0, 196, 240, 30, 'rgba(0,0,0,.7)');
+    text('HOST NOT RESPONDING', 200, 1, C.gold); text('HOST MUST KEEP THE GAME OPEN', 212, 1, '#fff');
+  }
+
+  // network: ~10 updates per second
+  if (now - sendT >= 100) {
+    sendT = now;
+    if (isHost) {
+      const p = {};
+      for (const q of Object.values(players)) if (q.online !== false) p[q.id] = { d: Math.round(q.d), y: Math.round(q.y), duck: q.duck, fin: q.fin, ft: q.ft };
+      if (guestConns.size) broadcast({ t: 'st', p });
+      // a guest that went silent (closed the app, lost signal): let it go, it can come back
+      for (const [id, c] of guestConns) { const q = players[id]; if (q && now - q.seen > 10000) { try { c.close(); } catch (e) {} guestConns.delete(id); q.online = false; q.inRace = false; sendRoster(); } }
+      if (now - roomSendT > 3000) { roomSendT = now; broadcast(rosterMsg()); }
+    } else if (hostConn && hostConn.open) {
+      sendTo(hostConn, { t: 'st', rid: raceId, s: myStats, lv: level, d: Math.round(d), y: Math.round(dinoY), duck: ducking, fin: myFin, ft: myFt });
+    }
+  }
+}
+function hostNewGame() {
+  for (const p of Object.values(players)) Object.assign(p, { pts: 0, p1: 0, p2: 0, p3: 0, awards: [], inRace: false, fin: false, d: 0 });
+  completed = 0; level = 1; resetRun(); phase = 'lobby'; lastResults = null; setState('RLOBBY'); sendRoster();
+}
+
+// ---- connect ----
+function connect(c, host, id) {
+  return new Promise(resolve => {
+    if (typeof Peer === 'undefined') { resolve('nolib'); return; }
+    code = c; isHost = host; myId = id; leaving = false; roomClosed = false;
+    let done = false, wait = null;
+    const finish = r => { if (!done) { done = true; clearInterval(wait); resolve(r); } };
+    const pe = host ? new Peer(PEER_PREFIX + code) : new Peer();
+    peer = pe;
+    pe.on('open', () => {
+      if (host) { pe.on('connection', hostOnConnection); finish('ok'); return; }
+      guestOpen();
+      const t0 = Date.now();
+      wait = setInterval(() => { if (hostConn && hostConn.open) finish('ok'); else if (Date.now() - t0 > 12000) finish('timeout'); }, 100);
+    });
+    pe.on('error', err => {
+      const t = err && err.type;
+      if (!done) { finish(t === 'unavailable-id' ? 'taken' : t === 'peer-unavailable' ? 'nohost' : 'neterr'); return; }
+      if (!host && t === 'peer-unavailable') { hostConn = null; lostHost(); }
+    });
+    pe.on('disconnected', () => { if (!leaving && peer === pe) { try { pe.reconnect(); } catch (e) {} } });
+  });
+}
+// immediate teardown (errors, menu)
+function disconnect() {
+  leaving = true;
+  try { if (hostConn) hostConn.close(); } catch (e) {}
+  for (const c of guestConns.values()) { try { c.close(); } catch (e) {} }
+  guestConns.clear();
+  try { if (peer) peer.destroy(); } catch (e) {}
+  peer = null; hostConn = null; players = {}; isHost = false;
+}
+// leaving on purpose: the host closes the room for everyone, a guest gives up their place
+function leaveRoom() {
+  if (peer) { if (isHost) broadcast({ t: 'closed' }); else sendTo(hostConn, { t: 'bye' }); }
+  forgetRoom();
+  const pe = peer, conns = [...guestConns.values()], hc = hostConn;
+  leaving = true; peer = null; hostConn = null; guestConns.clear(); players = {}; isHost = false; code = '';
+  setTimeout(() => { for (const c of conns) { try { c.close(); } catch (e) {} } try { hc && hc.close(); } catch (e) {} try { pe && pe.destroy(); } catch (e) {} }, 400);
+}
+
+// ======================= MENU / UI =======================
+function idleTick() {
+  drawWorld(speed); drawDino(false);
+  text(THEME.title1, 62, THEME.title1.length > 5 ? 3 : 4, T.text); text(THEME.title2, 100, 3, selColor);
+}
+function tick() {
+  const edge = jumpEdge; jumpEdge = false;
+  g.save();
+  try {
+    g.beginPath(); g.arc(CX, CY, 120, 0, Math.PI*2); g.clip();
+    if (mode === 'solo') soloTick(edge);
+    else if (mode === 'race' && state !== 'IDLE') raceTick(edge);
+    else idleTick();
+  } catch (e) { console.error(e); }      // one bad frame must never freeze the game
+  finally { g.restore(); g.globalAlpha = 1; }
+}
+
+const panel = $('panel'), pad = $('pad'), back = $('back');
+function show(el, on) { el.classList.toggle('hidden', !on); }
+function loadName() { try { return localStorage.getItem('dino-name') || ''; } catch (e) { return ''; } }
+function saveName(n) { try { localStorage.setItem('dino-name', n); } catch (e) {} }
+function el(tag, props = {}, kids = []) { const e = document.createElement(tag); Object.assign(e, props); for (const k of kids) e.append(k); return e; }
+document.addEventListener('pointerdown', e => { audioUnlock(); if (e.target.closest('button') && !e.target.closest('.btn')) sfx('click'); }, true);
+document.addEventListener('keydown', audioUnlock, true);
+$('mute').onclick = () => { audioUnlock(); setMuted(!muted); if (!muted) sfx('click'); };
+setMuted(muted);
+
+function renderMenu() {
+  mode = 'menu'; state = 'IDLE'; level = 1; resetRun();
+  show(pad, false); updateBack();
+  panel.innerHTML = `
+    <button class="big solo" id="bSolo">▶ משחק לבד</button>
+    <button class="big duo" id="bRace">🏁 מירוץ עם חברים — אונליין</button>
+    <div id="pick"></div>
+    <div class="note">במירוץ: עד ${MAX_PLAYERS} שחקנים רצים באותו מסלול. מי שנתקע במכשול מתעכב רגע. בכל שלב מקבלים נקודות לפי סדר ההגעה, ואחרי ${MAX_LEVEL} שלבים יש מנצח.</div>`;
+  $('pick').replaceWith(pickerCard());
+  $('bSolo').onclick = () => { keepAwake(); mode = 'solo'; lives = 3; startLevel(1); panel.innerHTML = ''; show(pad, true); updateBack(); $('jumpLabel').textContent = 'קפיצה'; };
+  $('bRace').onclick = renderRaceSetup;
+}
+// Character + colour picker. Used in the menu, the race setup and the race lobby.
+function pickerCard() {
+  const card = el('div', { className: 'card' }), chars = el('div', { className: 'chars' }), colors = el('div', { className: 'colors' });
+  card.append(el('h3', { textContent: 'בחר דמות' }), chars, colors);
+  const draw = () => {
+    chars.textContent = ''; colors.textContent = '';
+    for (const c of CHARS) {
+      const b = el('button', { className: 'chip' + (c.id === selChar ? ' sel' : ''), textContent: c.emoji + ' ' + c.name });
+      b.onclick = () => { selChar = c.id; savePref(THEME.prefKey + '-char', c.id); draw(); lookChanged(); };
+      chars.append(b);
+    }
+    for (const col of COLORS) {
+      const taken = mode === 'race' && Object.values(players).some(p => p.id !== myId && p.color === col);
+      const b = el('button', { className: 'sw' + (col === selColor ? ' sel' : '') });
+      b.style.background = col; if (taken) b.style.opacity = '0.25';
+      b.onclick = () => { if (taken) return; selColor = col; savePref(THEME.prefKey + '-color', col); draw(); lookChanged(); };
+      colors.append(b);
+    }
+  };
+  draw();
+  return card;
+}
+// In a race room, tell everybody about the new look.
+function lookChanged() {
+  if (mode !== 'race' || !myId || !players[myId]) return;
+  if (isHost) {
+    players[myId].char = selChar;
+    if (!Object.values(players).some(p => p.id !== myId && p.color === selColor)) players[myId].color = selColor;
+    sendRoster();
+  } else sendTo(hostConn, { t: 'hello', name: myName, char: selChar, color: selColor });
+}
+function newCode() { const a = 'abcdefghjkmnpqrstuvwxyz23456789'; let s = ''; for (let i = 0; i < 4; i++) s += a[Math.floor(Math.random() * a.length)]; return s; }
+function showSetupError(t) { forgetRoom(); disconnect(); renderRaceSetup(); const n = $('nStatus'); if (n) n.textContent = t; }
+
+let startRoom = null;   // set by renderRaceSetup; also used to reopen a saved room
+function renderRaceSetup() {
+  mode = 'race'; state = 'IDLE';
+  show(pad, false); updateBack();
+  panel.innerHTML = `
+    <input id="iName" maxlength="12" placeholder="השם שלך">
+    <div id="pick"></div>
+    <input id="iCode" maxlength="10" placeholder="קוד חדר" dir="ltr" autocapitalize="none" autocomplete="off">
+    <div class="row"><button class="big duo" id="bNew">צור חדר</button><button class="big ghost" id="bJoin">הצטרף</button></div>
+    <div class="note" id="nStatus"></div>
+    <div class="note">רוצה קוד משלך? כתוב אותו (3–10 אותיות באנגלית או ספרות) ולחץ "צור חדר". בלי קוד ייבחר קוד אקראי. החברים כותבים את אותו קוד ולוחצים "הצטרף".</div>
+    <div class="note">⚠️ המארח צריך להשאיר את המשחק פתוח על המסך בזמן המירוץ. החדר נשאר פתוח עד שהמארח סוגר אותו — מי שמתנתק חוזר עם הנקודות שלו.</div>`;
+  $('pick').replaceWith(pickerCard());
+  const iName = $('iName'); iName.value = loadName();
+  const status = t => { const n = $('nStatus'); if (n) n.textContent = t; };
+  startRoom = async (c, host, restore) => {
+    myName = cleanName(iName.value) || (restore && cleanName(restore.name)) || ''; saveName(myName);
+    status('מתחבר...');
+    keepAwake();
+    const id = (restore && cleanId(restore.me)) || freshId();
+    let r = await connect(c, host, id);
+    // reopening our own room after a reload: the old registration can take a few seconds to clear
+    for (let tries = 1; host && restore && r === 'taken' && tries <= 20; tries++) {
+      disconnect(); status(`פותח מחדש את החדר ${c.toUpperCase()}... (${tries})`);
+      await new Promise(res => setTimeout(res, 3000));
+      if (mode !== 'race' || state !== 'IDLE') return;        // the user went elsewhere meanwhile
+      r = await connect(c, host, id);
+    }
+    if (r !== 'ok') {
+      if (!host && restore && (r === 'nohost' || r === 'timeout') && peer) { enterRoom(restore); setState('RRECONN'); updateBack(); return; }   // keep trying in the background
+      disconnect();
+      if (r === 'taken' && !restore && !cleanCode($('iCode').value)) return startRoom(newCode(), true);   // random code clashed: pick another
+      status({ taken: 'הקוד הזה כבר בשימוש. בחר קוד אחר — או לחץ "הצטרף" אם זה החדר של החבר שלך.',
+        nohost: 'לא נמצא חדר עם הקוד הזה. ודא שהמארח יצר חדר והמשחק פתוח אצלו.',
+        timeout: 'החיבור לא הצליח. נסו על Wi-Fi ונסו שוב.', nolib: 'לא הצלחתי לטעון את רכיב החיבור. בדוק אינטרנט ורענן.',
+        neterr: 'בעיית רשת. נסה שוב בעוד רגע.' }[r] || 'שגיאה. נסה שוב.');
+      if (restore) forgetRoom();
+      return;
+    }
+    enterRoom(restore);
+  };
+  $('bNew').onclick = () => {
+    const raw = $('iCode').value.trim(), c = cleanCode(raw);
+    if (raw && !validCode(c)) { status('הקוד צריך להיות 3–10 אותיות באנגלית או ספרות'); return; }
+    startRoom(c || newCode(), true);
+  };
+  $('bJoin').onclick = () => {
+    const c = cleanCode($('iCode').value);
+    if (!validCode(c)) { status('כתוב את קוד החדר שקיבלת (3–10 אותיות או ספרות)'); return; }
+    startRoom(c, false);
+  };
+}
+function enterRoom(restore) {
+  lastResults = null; lastRoomSig = ''; phase = 'lobby';
+  if (isHost) {
+    players = {}; completed = 0;
+    if (restore && Array.isArray(restore.players)) {
+      for (const q of restore.players) {
+        const id = cleanId(q.id);
+        if (id) players[id] = newPlayer(id, { name: cleanName(q.name) || 'PLAYER', color: COLORS.includes(q.color) ? q.color : COLORS[1],
+          char: CHARS.some(c => c.id === q.char) ? q.char : 'dino', pts: +q.pts || 0, p1: +q.p1 || 0, p2: +q.p2 || 0, p3: +q.p3 || 0,
+          awards: Array.isArray(q.awards) ? q.awards.filter(a => typeof a === 'string').slice(0, 50) : [], online: false });
+      }
+      completed = Math.max(0, Math.min(MAX_LEVEL, +restore.completed || 0));
+      familyMode = !!restore.family;
+    }
+    const mine = players[myId] || newPlayer(myId);
+    const colorFree = !Object.values(players).some(q => q.id !== myId && q.color === selColor);
+    players[myId] = Object.assign(mine, { name: myName || 'HOST', char: selChar, color: colorFree ? selColor : mine.color, online: true });
+    level = completed >= MAX_LEVEL ? 1 : completed + 1;
+  } else level = 1;
+  resetRun(); setState('RLOBBY');
+  $('jumpLabel').textContent = isHost ? 'קפיצה / התחל' : 'קפיצה';
+  show(pad, true); updateBack();
+  saveRoom(); renderRoomPanel();
+}
+
+function renderRoomPanel() {
+  if (mode !== 'race' || state === 'IDLE') return;
+  panel.textContent = '';
+  if (phase === 'lobby') {
+    panel.append(el('div', { className: 'card code', innerHTML: `קוד החדר: <b>${code.toUpperCase()}</b>` },
+      [el('div', { className: 'note', textContent: isHost
+        ? 'שלחו את הקוד לחברים. כשכולם בפנים — לחץ קפיצה כדי להתחיל. החדר נשאר פתוח עד שתלחץ "✕ סגור חדר".'
+        : 'מחכים שהמארח יתחיל.' })]));
+    if (isHost) {
+      const t = el('button', { className: 'big ' + (familyMode ? 'duo' : 'ghost'),
+        textContent: familyMode ? '👨‍👩‍👧 משחק משפחה: פעיל ✓' : '👨‍👩‍👧 משחק משפחה: כבוי' });
+      t.onclick = () => { familyMode = !familyMode; sendRoster(); };
+      panel.append(t, el('div', { className: 'note', textContent: 'במשחק משפחה כל אחד זוכה בכל שלב בפרס אחר (הכי מהיר, הכי זהיר, מלך הקפיצות...), כולם מקבלים אותן נקודות — ואין ריבים 🙂' }));
+    } else if (familyMode) panel.append(el('div', { className: 'card note', textContent: '👨‍👩‍👧 משחק משפחה: בכל שלב כל אחד זוכה בפרס אחר!' }));
+    panel.append(pickerCard());
+  }
+  if (familyMode) { renderFamilyTable(); return; }
+  const showResults = lastResults && (phase === 'results' || phase === 'final');
+  const card = el('div', { className: 'card' });
+  card.append(el('h3', { textContent: phase === 'final' ? '🏆 טבלה סופית' : showResults ? `אחרי שלב ${lastResults.level}` : `שחקנים (${onlineCount()}/${MAX_PLAYERS})` }));
+  const tbl = el('table');
+  tbl.append(el('tr', {}, [el('th', { textContent: '#' }), el('th', { textContent: 'שחקן' }),
+    el('th', { textContent: showResults ? 'בשלב' : '' }), el('th', { textContent: 'נק׳' }), el('th', { className: 'n', textContent: '🥇🥈🥉' })]));
+  standings().forEach((p, i) => {
+    const row = showResults ? lastResults.rows.find(r => r.id === p.id) : null;
+    const lvl = row ? (row.place > 0 ? `${row.place} (+${row.got})` : row.place === 0 ? 'לא סיים' : '—') : '';
+    const nameCell = el('td', {}, [el('span', { className: 'dot', style: `background:${p.color}` }), document.createTextNode(charEmoji(p.char) + ' ' + (p.name || 'PLAYER') + (p.id === myId ? ' (אתה)' : '') + (p.online === false ? ' 💤' : ''))]);
+    tbl.append(el('tr', { className: p.id === myId ? 'me' : '' }, [el('td', { className: 'n', textContent: i + 1 }), nameCell,
+      el('td', { className: 'n', textContent: lvl }), el('td', { className: 'n', textContent: p.pts }), el('td', { className: 'n', textContent: `${p.p1}·${p.p2}·${p.p3}` })]));
+  });
+  card.append(tbl);
+  panel.append(card);
+}
+
+function renderFamilyTable() {
+  const showResults = lastResults && lastResults.family && (phase === 'results' || phase === 'final');
+  const card = el('div', { className: 'card' });
+  card.append(el('h3', { textContent: phase === 'final' ? '🎉 כולם ניצחו — הפרסים של כולם' : showResults ? `🏆 הפרסים של שלב ${lastResults.level}` : `שחקנים (${onlineCount()}/${MAX_PLAYERS}) · משחק משפחה` }));
+  const tbl = el('table');
+  tbl.append(el('tr', {}, [el('th', { textContent: 'שחקן' }), el('th', { textContent: showResults && phase !== 'final' ? 'הפרס בשלב' : '' }), el('th', { textContent: 'כל הפרסים' })]));
+  const list = Object.values(players).sort((a, b) => (a.name || '').localeCompare(b.name || ''));
+  for (const p of list) {
+    const row = showResults ? lastResults.rows.find(r => r.id === p.id) : null;
+    const a = row && row.award ? awardById(row.award) : null;
+    const nameCell = el('td', {}, [el('span', { className: 'dot', style: `background:${p.color}` }), document.createTextNode(charEmoji(p.char) + ' ' + (p.name || 'PLAYER') + (p.id === myId ? ' (אתה)' : '') + (p.online === false ? ' 💤' : ''))]);
+    tbl.append(el('tr', { className: p.id === myId ? 'me' : '' }, [nameCell,
+      el('td', { textContent: a && phase !== 'final' ? a.emoji + ' ' + a.name : '' }), el('td', { textContent: awardSummary(p.awards) })]));
+  }
+  card.append(tbl);
+  panel.append(card);
+}
+
+let backArmed = null;
+function inRoom() { return mode === 'race' && state !== 'IDLE' && state !== 'RCLOSED' && !!code && !leaving; }
+function updateBack() {
+  clearTimeout(backArmed); backArmed = null;
+  show(back, mode !== 'menu');
+  back.textContent = inRoom() ? (isHost ? '✕ סגור חדר' : '✕ צא מהחדר') : '→ תפריט';
+}
+back.onclick = () => {
+  if (inRoom()) {
+    if (!backArmed) {                                        // ask once more, so nobody closes the room by accident
+      back.textContent = isHost ? 'לחץ שוב — החדר ייסגר לכולם' : 'לחץ שוב כדי לצאת';
+      backArmed = setTimeout(updateBack, 3000); return;
+    }
+    leaveRoom();
+  } else disconnect();
+  renderMenu();
+};
+
+// fixed 28ms step
+let acc = 0, last = performance.now();
+function step(t, maxGap) {
+  acc += Math.min(Math.max(t - last, 0), maxGap); last = t;
+  while (acc >= 28) { now += 28; tick(); acc -= 28; }
+}
+function frame(t) { step(t, 200); requestAnimationFrame(frame); }
+requestAnimationFrame(frame);
+// When the page is in the background the browser pauses animation frames. Keep the
+// game clock (and the host's job of running the race) ticking as well as the browser allows.
+setInterval(() => { if (document.hidden) step(performance.now(), 1000); }, 250);
+
+// keep the screen on while playing
+let wakeLock = null;
+async function keepAwake() { try { if (navigator.wakeLock && !wakeLock) { wakeLock = await navigator.wakeLock.request('screen'); wakeLock.addEventListener('release', () => { wakeLock = null; }); } } catch (e) {} }
+document.addEventListener('visibilitychange', () => { if (!document.hidden && mode !== 'menu') keepAwake(); });
+renderMenu();
+
+// ---- input ----
+// Every finger is tracked by its id. A finger counts as released wherever it is lifted
+// (even after sliding off the button or the screen), and everything is released when
+// the page loses focus. Before this, a finger that slid off the round screen left the
+// jump "held" forever and the character kept jumping.
+const jumpPtrs = new Set(), duckPtrs = new Set();
+let keyJump = false, keyDuck = false, pressAt = -1e9;
+function refreshInput() {
+  const j = jumpPtrs.size > 0 || keyJump, dn = duckPtrs.size > 0 || keyDuck;
+  if (j && !input.jump) { jumpEdge = true; pressAt = now; }
+  input.jump = j; input.duck = dn;
+  $('jump').classList.toggle('on', j); $('duck').classList.toggle('on', dn);
+}
+function releaseAll() { jumpPtrs.clear(); duckPtrs.clear(); keyJump = keyDuck = false; refreshInput(); }
+function bindPress(e0, set, allowed) {
+  e0.addEventListener('pointerdown', e => {
+    if (allowed && !allowed()) return;
+    e.preventDefault();
+    try { e0.setPointerCapture(e.pointerId); } catch (_) {}
+    set.add(e.pointerId); refreshInput();
+  });
+  e0.addEventListener('contextmenu', e => e.preventDefault());
+}
+bindPress($('jump'), jumpPtrs); bindPress($('duck'), duckPtrs);
+bindPress(cv, jumpPtrs, () => mode !== 'menu');
+const lift = e => { if (jumpPtrs.delete(e.pointerId) | duckPtrs.delete(e.pointerId)) refreshInput(); };
+addEventListener('pointerup', lift, true);
+addEventListener('pointercancel', lift, true);
+addEventListener('touchend', e => { if (e.touches.length === 0 && (jumpPtrs.size || duckPtrs.size)) { jumpPtrs.clear(); duckPtrs.clear(); refreshInput(); } }, true);
+addEventListener('touchcancel', e => { if (e.touches.length === 0) { jumpPtrs.clear(); duckPtrs.clear(); refreshInput(); } }, true);
+addEventListener('blur', releaseAll);
+document.addEventListener('visibilitychange', () => { if (document.hidden) releaseAll(); });
+addEventListener('keydown', e => {
+  if (e.repeat || e.target.tagName === 'INPUT') return;
+  if (e.code === 'Space' || e.code === 'ArrowUp') { e.preventDefault(); keyJump = true; refreshInput(); }
+  if (e.code === 'ArrowDown') { e.preventDefault(); keyDuck = true; refreshInput(); }
+});
+addEventListener('keyup', e => {
+  if (e.code === 'Space' || e.code === 'ArrowUp') { keyJump = false; refreshInput(); }
+  if (e.code === 'ArrowDown') { keyDuck = false; refreshInput(); }
+});
+
+// reopen a saved room when the page loads (after a reload, or the browser was closed)
+(function resumeRoom() {
+  const r = savedRoom();
+  if (!r) return;
+  renderRaceSetup();
+  if (r.name) $('iName').value = r.name;
+  $('iCode').value = r.code.toUpperCase();
+  startRoom(r.code, !!r.host, r);
+})();
+</script>
+</body>
+</html>

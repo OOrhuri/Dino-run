@@ -38,6 +38,8 @@
   tr.me td { color: #ffd200; font-weight: 700; }
   .dot { display: inline-block; width: 11px; height: 11px; border-radius: 50%; margin-left: 6px; vertical-align: middle; }
   h3 { margin: 0 0 6px; font-size: 16px; }
+  #mute { position: absolute; top: 10px; left: 10px; width: 40px; height: 36px; border-radius: 18px; border: none;
+    background: #2a3245; color: #fff; font-size: 18px; z-index: 2; }
   #back { position: absolute; top: 10px; right: 10px; height: 36px; padding: 0 14px; border-radius: 18px; border: none;
     background: #2a3245; color: #fff; font-size: 14px; font-family: inherit; z-index: 2; }
   .chars { display: flex; gap: 6px; flex-wrap: wrap; }
@@ -52,6 +54,7 @@
 <body>
 <div class="wrap">
   <button id="back" class="hidden">→ תפריט</button>
+  <button id="mute" title="צליל">🔊</button>
   <div class="bezel"><canvas id="c" width="240" height="240"></canvas></div>
   <div class="pad hidden" id="pad">
     <button class="btn" id="duck">⬇<small>התכופפות</small></button>
@@ -60,6 +63,9 @@
   <div id="panel"></div>
 </div>
 <script>
+// ---- GAME THEME: a copy of this file with a different block here is a different game ----
+const THEME = window.GAME_THEME || { id: 'dino', title1: 'DINO', title2: 'RUN', prefKey: 'dino', chars: null };
+document.title = THEME.title1 + ' ' + THEME.title2[0] + THEME.title2.slice(1).toLowerCase();
 const cv = document.getElementById('c'), g = cv.getContext('2d');
 const CX = 120, CY = 120, GROUND = 165, DX = 40, MAX_LEVEL = 10;
 const $ = id => document.getElementById(id);
@@ -83,14 +89,19 @@ const POINTS = [10, 8, 6, 5, 4, 3, 2, 1];           // race: points by finishing
 const FINISH_WAIT_MS = 15000;                       // race: level ends this long after the first finisher
 const MAX_PLAYERS = 8;
 const COLORS = ['#9650dc', '#f08a24', '#2bb3c0', '#e0457b', '#5cbf3a', '#3a6fe0', '#d4b106', '#a1887f'];
-const CHARS = [ { id: 'dino', emoji: '🦖', name: 'דינו' }, { id: 'robot', emoji: '🤖', name: 'רובוט' }, { id: 'penguin', emoji: '🐧', name: 'פינגווין' },
+const ALL_CHARS = [ { id: 'dino', emoji: '🦖', name: 'דינו' }, { id: 'robot', emoji: '🤖', name: 'רובוט' }, { id: 'penguin', emoji: '🐧', name: 'פינגווין' },
                 { id: 'cat', emoji: '🐱', name: 'חתול' }, { id: 'frog', emoji: '🐸', name: 'צפרדע' },
-                { id: 'princess', emoji: '👸', name: 'נסיכה' }, { id: 'unicorn', emoji: '🦄', name: 'חד-קרן' }, { id: 'ninja', emoji: '🥷', name: 'נינג׳ה' } ];
+                { id: 'princess', emoji: '👸', name: 'נסיכה' }, { id: 'unicorn', emoji: '🦄', name: 'חד-קרן' }, { id: 'ninja', emoji: '🥷', name: 'נינג׳ה' },
+                // Tabodi Run characters (original)
+                { id: 'tabodi', emoji: '🟢', name: 'טבודי' }, { id: 'moose', emoji: '🫎', name: 'מוזי' }, { id: 'owl', emoji: '🦉', name: 'ינשופי' },
+                { id: 'fox', emoji: '🦊', name: 'שועלי' }, { id: 'bee', emoji: '🐝', name: 'דבורית' }, { id: 'octo', emoji: '🐙', name: 'תמנוני' },
+                { id: 'yeti', emoji: '🧊', name: 'יטי' }, { id: 'ladybug', emoji: '🐞', name: 'פרת משה' } ];
+const CHARS = THEME.chars ? THEME.chars.map(id => ALL_CHARS.find(c => c.id === id)).filter(Boolean) : ALL_CHARS.slice(0, 8);
 const charEmoji = id => (CHARS.find(c => c.id === id) || CHARS[0]).emoji;
 function loadPref(k, ok, def) { try { const v = localStorage.getItem(k); return ok(v) ? v : def; } catch (e) { return def; } }
 function savePref(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
-let selChar = loadPref('dino-char', v => CHARS.some(c => c.id === v), 'dino');
-let selColor = loadPref('dino-color', v => COLORS.includes(v), COLORS[0]);
+let selChar = loadPref(THEME.prefKey + '-char', v => CHARS.some(c => c.id === v), CHARS[0].id);
+let selColor = loadPref(THEME.prefKey + '-color', v => COLORS.includes(v), COLORS[0]);
 
 const THEMES = [
   { sky:'#78bef0', sand:'#e6c882', speck:'#b4965a', text:'#141e3c', cloud:'#ffffff' },
@@ -123,7 +134,72 @@ const rnd = (a, b) => a + (b - a) * Math.random();
 const clouds = [0,1,2].map(() => [rnd(0,240), rnd(55,110)]);
 const specks = Array.from({length:24}, () => [Math.random()*240, GROUND + 4 + Math.random()*24]);
 
-function setState(s) { state = s; stateTime = now; }
+// ======================= SOUNDS (synthesized, no files) =======================
+let actx = null, muted = false, lastSfx = {};
+try { muted = localStorage.getItem('dino-mute') === '1'; } catch (e) {}
+function audioUnlock() {                       // browsers allow sound only after a tap
+  try {
+    if (!actx) actx = new (window.AudioContext || window.webkitAudioContext)();
+    if (actx.state === 'suspended') actx.resume();
+  } catch (e) {}
+}
+function tone(freq, dur, { type = 'square', vol = 0.18, slide = 0, delay = 0, attack = 0.005 } = {}) {
+  if (!actx || muted) return;
+  try {
+    const t0 = actx.currentTime + delay, o = actx.createOscillator(), gn = actx.createGain();
+    o.type = type; o.frequency.setValueAtTime(freq, t0);
+    if (slide) o.frequency.exponentialRampToValueAtTime(Math.max(30, freq + slide), t0 + dur);
+    gn.gain.setValueAtTime(0.0001, t0); gn.gain.linearRampToValueAtTime(vol, t0 + attack);
+    gn.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(gn); gn.connect(actx.destination); o.start(t0); o.stop(t0 + dur + 0.05);
+  } catch (e) {}
+}
+function noise(dur, { vol = 0.2, delay = 0 } = {}) {       // for bumps and whooshes
+  if (!actx || muted) return;
+  try {
+    const n = Math.floor(actx.sampleRate * dur), buf = actx.createBuffer(1, n, actx.sampleRate), ch = buf.getChannelData(0);
+    for (let i = 0; i < n; i++) ch[i] = (Math.random() * 2 - 1) * (1 - i / n);
+    const src = actx.createBufferSource(), gn = actx.createGain(), f = actx.createBiquadFilter();
+    f.type = 'lowpass'; f.frequency.value = 900; src.buffer = buf; gn.gain.value = vol;
+    src.connect(f); f.connect(gn); gn.connect(actx.destination); src.start(actx.currentTime + delay);
+  } catch (e) {}
+}
+const N = { C4: 262, D4: 294, E4: 330, F4: 349, G4: 392, A4: 440, B4: 494, C5: 523, D5: 587, E5: 659, G5: 784, C6: 1047 };
+function melody(notes, step, opts) { notes.forEach((n, i) => n && tone(n, step * 0.9, Object.assign({ delay: i * step }, opts))); }
+function sfx(name) {
+  if (!actx || muted) return;
+  const t = performance.now();
+  if (t - (lastSfx[name] || 0) < 40) return; lastSfx[name] = t;      // no machine-gun repeats
+  switch (name) {
+    case 'jump':   tone(300, 0.18, { slide: 350, vol: 0.14 }); break;
+    case 'land':   tone(140, 0.07, { type: 'triangle', vol: 0.12 }); break;
+    case 'duck':   noise(0.08, { vol: 0.08 }); break;
+    case 'pass':   tone(N.C6, 0.06, { type: 'sine', vol: 0.07 }); break;
+    case 'hit':    noise(0.25, { vol: 0.35 }); tone(180, 0.3, { type: 'sawtooth', slide: -120, vol: 0.18 }); break;
+    case 'tick':   tone(N.A4, 0.12, { vol: 0.15 }); break;
+    case 'go':     tone(N.A4 * 2, 0.35, { vol: 0.18 }); break;
+    case 'start':  melody([N.C4, N.E4, N.G4], 0.09, { vol: 0.14 }); break;
+    case 'finish': melody([N.G4, N.C5, N.E5, N.G5], 0.08, { type: 'triangle', vol: 0.18 }); break;
+    case 'clear':  melody([N.C5, N.E5, N.G5, N.C6, 0, N.G5, N.C6], 0.11, { type: 'triangle', vol: 0.16 }); break;
+    case 'prize':  melody([N.E5, N.G5, N.C6, N.E5, N.G5, N.C6], 0.09, { type: 'sine', vol: 0.18 }); tone(N.C6, 0.6, { type: 'sine', vol: 0.12, delay: 0.55 }); break;
+    case 'win':    melody([N.C5, N.C5, N.C5, N.E5, N.G5, N.E5, N.G5, N.C6], 0.13, { type: 'triangle', vol: 0.18 }); melody([N.C4, 0, N.G4, 0, N.C4, 0, N.G4, N.C5], 0.13, { type: 'sine', vol: 0.12 }); break;
+    case 'over':   melody([N.E4, N.D4, N.C4, 0, 196], 0.18, { type: 'sawtooth', vol: 0.12 }); break;
+    case 'join':   melody([N.E5, N.G5], 0.08, { type: 'sine', vol: 0.12 }); break;
+    case 'leave':  melody([N.G4, N.E4], 0.1, { type: 'sine', vol: 0.1 }); break;
+    case 'click':  tone(N.C6, 0.04, { type: 'sine', vol: 0.08 }); break;
+    case 'life':   melody([N.C5, N.E5], 0.07, { type: 'sine', vol: 0.12 }); break;
+  }
+}
+function setMuted(v) { muted = v; try { localStorage.setItem('dino-mute', v ? '1' : '0'); } catch (e) {} $('mute').textContent = v ? '🔇' : '🔊'; }
+
+const STATE_SFX = { INTRO: 'start', CLEAR: 'clear', WIN: 'win', OVER: 'over', RDONE: 'finish', RFINAL: 'win', RCLOSED: 'leave' };
+function setState(s) {
+  const prev = state; state = s; stateTime = now;
+  if (s === 'RRES') sfx(lastResults && lastResults.family ? 'prize' : 'clear');
+  else if (s === 'RCOUNT') { sfx('tick'); countShown = 3; }
+  else if (STATE_SFX[s] && prev !== s) sfx(STATE_SFX[s]);
+}
+let countShown = 0;
 function resetRun() {
   if (typeof myFin !== 'undefined') { myFin = false; myFt = 0; d = 0; }
   speed = levelSpeed(level); T = THEMES[(level - 1) % 5];
@@ -283,7 +359,137 @@ function ninjaShape(x, b, duck, col, legA) {
     rect(x+9, b-4, 4, 4, col); rect(x+20, b-4, 4, 4, col);
   }
 }
+// ---- Tabodi Run cast (all original). Same footprint and hitbox as the others. ----
+function tabodiShape(x, b, duck, col, legA) {
+  // a round, striped forest critter with two antennae and one big tooth
+  const stripe = 'rgba(0,0,0,.18)';
+  if (!duck) {
+    rect(x+10, b-6, 4, legA ? 6 : 4, col); rect(x+22, b-6, 4, legA ? 4 : 6, col);
+    rr(x+6, b-32, 24, 27, 11, col);
+    for (let i = 0; i < 3; i++) rect(x+6, b-26 + i * 7, 24, 3, stripe);
+    rr(x+11, b-22, 14, 14, 6, '#fff7d6');
+    rect(x+13, b-36, 2, 6, col); circ(x+14, b-37, 2.5, C.gold); rect(x+21, b-36, 2, 6, col); circ(x+22, b-37, 2.5, C.gold);
+    circ(x+15, b-23, 4, '#fff'); circ(x+23, b-23, 4, '#fff'); rect(x+15, b-24, 2.5, 2.5, '#111'); rect(x+23, b-24, 2.5, 2.5, '#111');
+    rect(x+17, b-16, 4, 4, '#fff');
+  } else {
+    rr(x+3, b-16, 30, 14, 7, col);
+    for (let i = 0; i < 3; i++) rect(x+8 + i * 8, b-16, 3, 14, stripe);
+    circ(x+22, b-10, 3, '#fff'); circ(x+29, b-10, 3, '#fff'); rect(x+22, b-11, 2, 2, '#111'); rect(x+29, b-11, 2, 2, '#111');
+    rect(x+30, b-20, 2, 5, col); circ(x+31, b-21, 2, C.gold);
+    rect(x+8, b-3, 4, 3, col); rect(x+22, b-3, 4, 3, col);
+  }
+}
+function mooseShape(x, b, duck, col, legA) {
+  const antler = '#d9a066', nose = '#3a2a22';
+  if (!duck) {
+    rect(x+8, b-10, 4, legA ? 10 : 7, col); rect(x+14, b-10, 4, legA ? 7 : 10, col); rect(x+22, b-10, 4, legA ? 10 : 7, col);
+    rr(x+5, b-24, 24, 15, 6, col);
+    rr(x+22, b-36, 13, 13, 5, col); rr(x+28, b-31, 9, 8, 4, nose);
+    rect(x+30, b-34, 2, 2, '#fff'); rect(x+31, b-34, 1, 1, '#111');
+    rect(x+24, b-42, 2, 7, antler); rect(x+20, b-41, 6, 2, antler); rect(x+20, b-44, 2, 4, antler);
+    rect(x+29, b-42, 2, 7, antler); rect(x+28, b-41, 6, 2, antler); rect(x+32, b-44, 2, 4, antler);
+  } else {
+    rr(x+3, b-13, 26, 10, 5, col); rr(x+24, b-17, 12, 9, 4, col); rr(x+31, b-14, 7, 6, 3, nose);
+    rect(x+26, b-21, 2, 5, antler); rect(x+23, b-21, 7, 2, antler);
+    rect(x+8, b-4, 4, 4, col); rect(x+20, b-4, 4, 4, col);
+  }
+}
+function owlShape(x, b, duck, col, legA) {
+  const beak = '#f5a623', face = '#fff2d0';
+  if (!duck) {
+    rect(x+12, b-4, 4, 4, beak); rect(x+20, b-4, 4, 4, beak);
+    rr(x+7, b-36, 22, 33, 10, col);
+    rr(x+10, b-22, 16, 16, 6, face);
+    circ(x+14, b-28, 5, '#fff'); circ(x+23, b-28, 5, '#fff'); circ(x+15, b-28, 2.5, '#111'); circ(x+22, b-28, 2.5, '#111');
+    tri(x+16, b-23, x+21, b-23, x+18.5, b-18, beak);
+    tri(x+8, b-34, x+6, b-41, x+13, b-36, col); tri(x+28, b-34, x+30, b-41, x+23, b-36, col);
+    rect(x + (legA ? 4 : 6), b-26, 5, 12, 'rgba(0,0,0,.15)');
+  } else {
+    rr(x+3, b-16, 32, 13, 7, col); rr(x+18, b-13, 14, 9, 4, face);
+    circ(x+23, b-10, 3, '#fff'); circ(x+30, b-10, 3, '#fff'); rect(x+23, b-11, 2, 2, '#111'); rect(x+30, b-11, 2, 2, '#111');
+    tri(x+26, b-6, x+29, b-6, x+27.5, b-3, beak);
+    rect(x+9, b-3, 4, 3, beak); rect(x+21, b-3, 4, 3, beak);
+  }
+}
+function foxShape(x, b, duck, col, legA) {
+  const tip = '#fff';
+  if (!duck) {
+    rr(x, b-22, 9, 7, 3, col); rr(x, b-22, 4, 7, 2, tip);
+    rr(x+6, b-22, 22, 12, 5, col);
+    rect(x+9, b-10, 3, legA ? 10 : 7, col); rect(x+14, b-10, 3, legA ? 7 : 10, col); rect(x+22, b-10, 3, legA ? 10 : 7, col);
+    rr(x+21, b-32, 14, 12, 5, col); tri(x+30, b-26, x+38, b-24, x+30, b-21, col); circ(x+37, b-24, 1.5, '#111');
+    tri(x+22, b-31, x+23, b-39, x+27, b-31, col); tri(x+30, b-31, x+33, b-39, x+34, b-31, col);
+    rect(x+27, b-29, 2, 2, '#111'); rr(x+26, b-25, 8, 5, 2, tip);
+  } else {
+    rr(x, b-11, 8, 6, 3, col); rr(x, b-11, 3, 6, 2, tip);
+    rr(x+5, b-13, 24, 10, 5, col); rr(x+24, b-16, 12, 9, 4, col); tri(x+33, b-12, x+40, b-10, x+33, b-8, col);
+    tri(x+25, b-16, x+26, b-21, x+29, b-16, col); tri(x+31, b-16, x+34, b-21, x+35, b-16, col);
+    rect(x+30, b-13, 2, 2, '#111');
+    rect(x+9, b-3, 3, 3, col); rect(x+21, b-3, 3, 3, col);
+  }
+}
+function beeShape(x, b, duck, col, legA) {
+  const wing = 'rgba(255,255,255,.75)', dark = '#222';
+  const flap = Math.floor(performance.now() / 70) % 2;
+  if (!duck) {
+    rr(x+7, b-24, 24, 16, 8, col); rect(x+13, b-24, 4, 16, dark); rect(x+21, b-24, 4, 16, dark);
+    tri(x+6, b-17, x+1, b-16, x+7, b-14, dark);
+    circ(x+30, b-19, 7, col); circ(x+32, b-21, 2, '#fff'); rect(x+32, b-22, 1.5, 1.5, '#111');
+    rect(x+28, b-30, 1, 5, dark); circ(x+28, b-31, 1.5, dark); rect(x+33, b-30, 1, 5, dark); circ(x+33, b-31, 1.5, dark);
+    rr(x+10, b-36 + flap * 3, 10, 12 - flap * 3, 5, wing); rr(x+19, b-36 + flap * 3, 10, 12 - flap * 3, 5, wing);
+    rect(x+12, b-8, 3, 4, dark); rect(x+20, b-8, 3, 4, dark);
+  } else {
+    rr(x+3, b-13, 28, 10, 5, col); rect(x+9, b-13, 4, 10, dark); rect(x+17, b-13, 4, 10, dark);
+    circ(x+32, b-10, 5, col); rect(x+33, b-12, 1.5, 1.5, '#111');
+    rr(x+9, b-18, 8, 5, 2, wing); rr(x+17, b-18, 8, 5, 2, wing);
+  }
+}
+function octoShape(x, b, duck, col, legA) {
+  const w = Math.floor(performance.now() / 120) % 2;
+  if (!duck) {
+    rr(x+7, b-36, 24, 22, 11, col);
+    circ(x+15, b-26, 4, '#fff'); circ(x+23, b-26, 4, '#fff'); rect(x+15, b-26, 2.5, 2.5, '#111'); rect(x+23, b-26, 2.5, 2.5, '#111');
+    rect(x+16, b-20, 6, 1.5, '#111');
+    for (let i = 0; i < 4; i++) { const tx = x+8 + i * 6, wig = (i + w) % 2 ? 3 : 0; rr(tx, b-15, 4, 12 + wig, 2, col); circ(tx+2, b-3 + wig, 2.5, col); }
+  } else {
+    rr(x+4, b-16, 30, 13, 7, col);
+    circ(x+22, b-11, 3, '#fff'); circ(x+29, b-11, 3, '#fff'); rect(x+22, b-11, 2, 2, '#111'); rect(x+29, b-11, 2, 2, '#111');
+    for (let i = 0; i < 5; i++) rr(x+5 + i * 6, b-4, 4, 4, 2, col);
+  }
+}
+function yetiShape(x, b, duck, col, legA) {
+  const fur = '#f4f8ff', face = '#9ec5e8';
+  if (!duck) {
+    rect(x+9, b-8, 5, legA ? 8 : 5, fur); rect(x+21, b-8, 5, legA ? 5 : 8, fur);
+    rr(x+6, b-30, 24, 23, 9, fur); rr(x+10, b-20, 16, 10, 5, col);
+    rr(x+9, b-38, 18, 12, 6, fur); rr(x+12, b-35, 12, 8, 4, face);
+    rect(x+14, b-33, 2, 2, '#111'); rect(x+20, b-33, 2, 2, '#111'); rect(x+15, b-29, 6, 1.5, '#111');
+    rect(x+2, b-26, 5, 10, fur); rect(x+29, b-26, 5, 10, fur);
+  } else {
+    rr(x+3, b-16, 30, 13, 7, fur); rr(x+22, b-14, 10, 8, 4, face); rr(x+6, b-12, 14, 7, 3, col);
+    rect(x+25, b-12, 2, 2, '#111'); rect(x+29, b-12, 2, 2, '#111');
+    rect(x+8, b-3, 5, 3, fur); rect(x+22, b-3, 5, 3, fur);
+  }
+}
+function ladybugShape(x, b, duck, col, legA) {
+  const dark = '#222';
+  if (!duck) {
+    rect(x+10, b-5, 3, 5, dark); rect(x+17, b-5, 3, 5, dark); rect(x+24, b-5, 3, 5, dark);
+    rr(x+5, b-28, 26, 24, 12, col); rect(x+17, b-28, 2, 22, dark);
+    circ(x+11, b-20, 2.5, dark); circ(x+25, b-20, 2.5, dark); circ(x+13, b-11, 2.5, dark); circ(x+23, b-11, 2.5, dark);
+    circ(x+18, b-32, 7, dark); circ(x+15, b-33, 2.5, '#fff'); circ(x+21, b-33, 2.5, '#fff'); rect(x+15, b-34, 1.5, 1.5, '#111'); rect(x+21, b-34, 1.5, 1.5, '#111');
+    rect(x+14, b-42, 1, 5, dark); circ(x+14, b-42, 1.5, dark); rect(x+22, b-42, 1, 5, dark); circ(x+22, b-42, 1.5, dark);
+  } else {
+    rr(x+3, b-14, 28, 12, 6, col); rect(x+16, b-14, 2, 12, dark);
+    circ(x+9, b-9, 2, dark); circ(x+23, b-9, 2, dark);
+    circ(x+32, b-10, 5, dark); rect(x+32, b-12, 2, 2, '#fff');
+    rect(x+8, b-3, 3, 3, dark); rect(x+20, b-3, 3, 3, dark);
+  }
+}
+const SHAPES = { robot: robotShape, penguin: penguinShape, cat: catShape, frog: frogShape, princess: princessShape, unicorn: unicornShape, ninja: ninjaShape,
+                 tabodi: tabodiShape, moose: mooseShape, owl: owlShape, fox: foxShape, bee: beeShape, octo: octoShape, yeti: yetiShape, ladybug: ladybugShape };
 function charShape(kind, x, b, duck, col, legA) {
+  if (SHAPES[kind]) { SHAPES[kind](x, b, duck, col, legA); return; }
   if (kind === 'robot') robotShape(x, b, duck, col, legA);
   else if (kind === 'penguin') penguinShape(x, b, duck, col, legA);
   else if (kind === 'cat') catShape(x, b, duck, col, legA);
@@ -350,14 +556,16 @@ const ord = n => n + (n % 10 === 1 && n !== 11 ? 'ST' : n % 10 === 2 && n !== 12
 // ---- physics shared by both modes ----
 function physics() {
   const up = input.jump, down = input.duck;
-  if (onGround && up && now - pressAt <= 150) { vy = -11; onGround = false; pressAt = -1e9; }
+  if (onGround && up && now - pressAt <= 150) { vy = -11; onGround = false; pressAt = -1e9; sfx('jump'); }
   if (!onGround) {
     if (!up && vy < -5) vy = -5;
     if (down) vy += 1.5;
     vy += 0.8; dinoY += vy;
-    if (dinoY >= GROUND) { dinoY = GROUND; vy = 0; onGround = true; }
+    if (dinoY >= GROUND) { dinoY = GROUND; vy = 0; onGround = true; sfx('land'); }
   }
+  const wasDucking = ducking;
   ducking = onGround && down;
+  if (ducking && !wasDucking) sfx('duck');
 }
 function hitTest(o) {
   const b = dinoY;
@@ -393,11 +601,11 @@ function soloTick(edge) {
       for (const o of obs) {
         o.x -= o.type >= BIRD_LOW ? speed + 0.6 : speed;
         const [, , x1] = obBox(o);
-        if (!o.passed && x1 < DX) { o.passed = true; cleared++; }
-        if (now > invulnUntil && !o.passed && hitTest(o)) { invulnUntil = now + 1200; o.passed = true; cleared++; lives--; if (lives <= 0) setState('OVER'); }
+        if (!o.passed && x1 < DX) { o.passed = true; cleared++; sfx('pass'); }
+        if (now > invulnUntil && !o.passed && hitTest(o)) { invulnUntil = now + 1200; o.passed = true; cleared++; lives--; sfx('hit'); if (lives <= 0) setState('OVER'); }
       }
       obs = obs.filter(o => o.x + obWidth(o.type) > -5);
-      if (state === 'PLAY' && cleared >= levelGoal(level)) { if (lives < 5) lives++; setState(level >= MAX_LEVEL ? 'WIN' : 'CLEAR'); }
+      if (state === 'PLAY' && cleared >= levelGoal(level)) { if (lives < 5) { lives++; sfx('life'); } setState(level >= MAX_LEVEL ? 'WIN' : 'CLEAR'); }
       drawWorld(speed);
       for (const o of obs) drawObstacle(o);
       if (!(now < invulnUntil && Math.floor(now / 100) % 2)) drawDino(ducking);
@@ -437,8 +645,8 @@ function soloTick(edge) {
 //  - guests reconnect by themselves;
 //  - the host's phone remembers the room (code, players, points) and reopens it
 //    with the same code after a reload.
-const PEER_PREFIX = 'dinorun-race-v1-';
-const ROOM_KEY = 'dino-room';
+const PEER_PREFIX = THEME.id + 'run-race-v1-';
+const ROOM_KEY = THEME.prefKey + '-room';
 let peer = null, isHost = false, hostConn = null;
 const guestConns = new Map();          // host only: player id -> connection
 let myId = '', myName = '', code = '';
@@ -511,7 +719,7 @@ function makeCourse(seed, lv) {
 }
 const me = () => players[myId];
 function newPlayer(id, extra) {
-  return Object.assign({ id, name: 'PLAYER', color: COLORS[1], char: 'dino', pts: 0, p1: 0, p2: 0, p3: 0, inRace: false, online: true,
+  return Object.assign({ id, name: 'PLAYER', color: COLORS[1], char: CHARS[0].id, pts: 0, p1: 0, p2: 0, p3: 0, inRace: false, online: true,
                          d: 0, y: GROUND, duck: false, fin: false, ft: 0, seen: now }, extra || {});
 }
 const onlineCount = () => Object.values(players).filter(p => p.online !== false).length;
@@ -549,7 +757,8 @@ function hostOnConnection(c) {
       if (!players[cid]) {
         if (onlineCount() >= MAX_PLAYERS) { sendTo(c, { t: 'full' }); setTimeout(() => { try { c.close(); } catch (e) {} }, 500); return; }
         const used = new Set(Object.values(players).map(p => p.color));
-        players[cid] = newPlayer(cid, { color: COLORS.find(x => !used.has(x)) || COLORS[1] });
+        players[cid] = newPlayer(cid, { color: COLORS.find(x => !used.has(x)) || COLORS[1], char: CHARS[0].id });
+        sfx('join');
       }
       const old = guestConns.get(cid);
       id = cid; guestConns.set(cid, c);
@@ -593,6 +802,7 @@ function onHostData(m) {
     const changed = sig !== lastRoomSig; lastRoomSig = sig;
     const old = players; players = {};
     for (const q of m.players || []) players[q.id] = Object.assign({ d: 0, y: GROUND, duck: false, fin: false, ft: 0 }, old[q.id] || {}, q);
+    if (Object.keys(players).length > Object.keys(old).length && Object.keys(old).length) sfx('join');
     completed = m.completed || 0;
     familyMode = !!m.family;
     if (m.phase === 'lobby' && phase !== 'lobby') { phase = 'lobby'; level = m.level || 1; resetRun(); setState('RLOBBY'); }
@@ -727,9 +937,10 @@ function raceTick(edge) {
     case 'RCOUNT': {
       drawWorld(0); drawDino(false, myColor);
       const left = 3 - Math.floor((now - stateTime) / 1000);
+      if (left < countShown && left >= 1) { countShown = left; sfx('tick'); }
       text('LEVEL ' + level, 40, 2, T.text);
       text(String(Math.max(left, 1)), 70, 6, C.gold);
-      if (left <= 0) { phase = 'race'; raceStart = now; invulnUntil = now + 600; setState('RRACE'); }
+      if (left <= 0) { phase = 'race'; raceStart = now; invulnUntil = now + 600; setState('RRACE'); sfx('go'); }
       break;
     }
     case 'RRACE': case 'RDONE': {
@@ -752,10 +963,10 @@ function raceTick(edge) {
             }
           }
           if (!o.passed && o.x + obWidth(o.type) < DX) {
-            o.passed = true; st.streak++; st.best = Math.max(st.best, st.streak);
+            o.passed = true; st.streak++; st.best = Math.max(st.best, st.streak); sfx('pass');
             if (o.minGap !== undefined && o.minGap < 8) st.shave++;
           }
-          if (now > invulnUntil && !o.passed && hitTest(o)) { o.passed = true; st.hits++; st.streak = 0; stunUntil = now + STUN_MS; invulnUntil = now + STUN_MS + 600; }
+          if (now > invulnUntil && !o.passed && hitTest(o)) { o.passed = true; st.hits++; st.streak = 0; stunUntil = now + STUN_MS; invulnUntil = now + STUN_MS + 600; sfx('hit'); }
         }
         if (d >= course.L) { d = course.L; myFin = true; myFt = now - raceStart; dinoY = GROUND; onGround = true; if (m) { m.fin = true; m.ft = myFt; } if (isHost && !firstFinishAt) firstFinishAt = now; setState('RDONE'); }
       } else for (const o of obs) o.x = DX + (o.p - d);
@@ -924,7 +1135,7 @@ function leaveRoom() {
 // ======================= MENU / UI =======================
 function idleTick() {
   drawWorld(speed); drawDino(false);
-  text('DINO', 62, 4, T.text); text('RUN', 100, 3, selColor);
+  text(THEME.title1, 62, THEME.title1.length > 5 ? 3 : 4, T.text); text(THEME.title2, 100, 3, selColor);
 }
 function tick() {
   const edge = jumpEdge; jumpEdge = false;
@@ -943,6 +1154,10 @@ function show(el, on) { el.classList.toggle('hidden', !on); }
 function loadName() { try { return localStorage.getItem('dino-name') || ''; } catch (e) { return ''; } }
 function saveName(n) { try { localStorage.setItem('dino-name', n); } catch (e) {} }
 function el(tag, props = {}, kids = []) { const e = document.createElement(tag); Object.assign(e, props); for (const k of kids) e.append(k); return e; }
+document.addEventListener('pointerdown', e => { audioUnlock(); if (e.target.closest('button') && !e.target.closest('.btn')) sfx('click'); }, true);
+document.addEventListener('keydown', audioUnlock, true);
+$('mute').onclick = () => { audioUnlock(); setMuted(!muted); if (!muted) sfx('click'); };
+setMuted(muted);
 
 function renderMenu() {
   mode = 'menu'; state = 'IDLE'; level = 1; resetRun();
@@ -964,14 +1179,14 @@ function pickerCard() {
     chars.textContent = ''; colors.textContent = '';
     for (const c of CHARS) {
       const b = el('button', { className: 'chip' + (c.id === selChar ? ' sel' : ''), textContent: c.emoji + ' ' + c.name });
-      b.onclick = () => { selChar = c.id; savePref('dino-char', c.id); draw(); lookChanged(); };
+      b.onclick = () => { selChar = c.id; savePref(THEME.prefKey + '-char', c.id); draw(); lookChanged(); };
       chars.append(b);
     }
     for (const col of COLORS) {
       const taken = mode === 'race' && Object.values(players).some(p => p.id !== myId && p.color === col);
       const b = el('button', { className: 'sw' + (col === selColor ? ' sel' : '') });
       b.style.background = col; if (taken) b.style.opacity = '0.25';
-      b.onclick = () => { if (taken) return; selColor = col; savePref('dino-color', col); draw(); lookChanged(); };
+      b.onclick = () => { if (taken) return; selColor = col; savePref(THEME.prefKey + '-color', col); draw(); lookChanged(); };
       colors.append(b);
     }
   };
